@@ -1,0 +1,629 @@
+# beginning of r script --------------------------------------------------------
+
+# 1. libraries ---------------------------------------------------------------
+
+library(tidycensus)
+library(tidyverse)
+library(ggspatial)
+library(arcpullr)
+library(tigris)
+library(raster)
+library(readxl)
+library(units)
+library(sf)
+
+# 2. load data ----
+
+## 2.1 census (tracts) ----
+
+### 2.1.1 prep ----
+
+api_key <- "e0e0537e1640689fd0719a4f97581e336b10c8ce"
+census_api_key(api_key, overwrite=TRUE, install=TRUE)
+
+readRenviron("~/.Renviron")
+
+options(tigris_use_cache = TRUE)
+
+### 2.1.2 review census tables ----
+
+## use this link for reference to census tables: https://www.socialexplorer.com/data/C2020/metadata/?ds=SF1&table=P0120
+
+## identifying sex by age table
+
+# decennial_tables <- load_variables(2010, "sf1")
+# view(decennial_tables)
+# P012 = sex by age
+
+### 2.1.3 import census data ----
+
+## downloading population counts for PA block groups in 12 study counties by 
+## sex and age from the 2010 decennial census
+
+pop.est.00 <- get_decennial(geography = "tract", # geogaphic units
+                   table = "P012",               # list of variables to include
+                   year = 2010,                  # final year of data set over 5-yr period
+                   state = "PA",                 # restricting to only PA
+                   county = c("Berks County", "Bucks County", "Carbon County", "Chester County", "Delaware County", "Lancaster County", "Lebanon County", "Lehigh County", "Monroe County", "Montgomery County", "Northampton County", "Schuylkill County"),
+                   geometry = TRUE,              # attach shapefiles to data set
+                   keep_geo_vars = TRUE,     
+                   sumfile = "sf1",              # ACS 5-year data set type
+                   output = "wide"               # data structure as a wide file
+)
+
+## visually reviewing the shapefiles
+
+# ggplot(pop.est.00) +
+#   geom_sf()
+
+pop.est.00$area.tract <- abs(st_area(pop.est.00)) # calculating area of each census tract polygon to later determine the proportion of overlap between geographic units to calculate a more accurate population count. use absolute value to prevent negative numbers for polygons within other polygons
+
+## 2.2 pasda (municipalities) ----
+
+mun.shp <- get_spatial_layer("https://mapservices.pasda.psu.edu/server/rest/services/pasda/PennDOT/MapServer/10", sf_type = "esriGeometryPolygon") %>% # downloading data directly from pasda website
+                st_set_crs(st_crs(4269)) %>% # set coordinate system to match other geo files
+                st_transform(crs = 4269) %>% # set projection to match other geo files
+                dplyr::filter(FIPS_COUNT %in% c("011", "017", "025", "029", "045", "071", "075", "077", "089", "091", "095", "107")) # only keeping 12 study area counties
+
+## repairing simple geometry issues in municipality and pws shapefiles
+mun.shp <- st_make_valid(mun.shp)
+
+## visually reviewing the shapefiles
+# ggplot(mun.shp) +
+#   geom_sf()
+
+# calculating area of each census tract polygon to later determine the proportion of overlap between geographic units to calculate a more accurate population count. use absolute value to prevent negative numbers for polygons within other polygons
+mun.shp$area.mun <- st_area(mun.shp)
+
+## 2.3 pasda (public water supply areas) ----
+
+pws.shp <- get_spatial_layer("https://mapservices.pasda.psu.edu/server/rest/services/pasda/DEP2/MapServer/8", sf_type = "esriGeometryPolygon") %>% # downloading data directly from pasda website
+  st_set_crs(st_crs(4269)) %>% # set coordinate system to match other geo files
+  st_transform(crs = 4269) %>% # set projection to match other geo files
+  dplyr::filter(CNTY_NAME %in% c("Berks", "Bucks", "Carbon", "Chester", "Delaware", "Lancaster", "Lebanon", "Lehigh", "Monroe", "Montgomery", "Northampton", "Schuylkill")) # only keeping 12 study area counties
+
+## repairing simple geometry issues in pws shapefiles
+pws.shp <- st_make_valid(pws.shp)
+
+## visually reviewing the shapefiles
+# ggplot(pws.shp) +
+#   geom_sf()
+
+# calculating area of each census tract polygon to later determine the proportion of overlap between geographic units to calculate a more accurate population count. use absolute value to prevent negative numbers for polygons within other polygons
+pws.shp$area.pws <- st_area(pws.shp)
+
+## 2.4 spatial pfas testing data ----
+
+## This data was created in ArcGIS previously by Ryan (on Temple server in 'PFAS + Spatial Cancer' folder)
+## Only used to identify the PWS tested for pfas, which would represent exposure
+
+pws.pfastest <- read_excel("01_data/Public Water Supply x PFAS Test_onlysheet1.xlsx", .name_repair = "universal") %>% # .name_repair replaces spaces in variable names with '.' 
+                  mutate(tested = Tested.by.DEP.or.UCMR.3, # creating new variables for merging and easier variable naming
+                         PWS_ID = as.character(pwsid)) %>%
+                  dplyr::select(PWS_ID, tested) # only keeping PWS ID and testing column
+
+## visually reviewing the shapefiles
+
+# ggplot(pws.pfastest) +
+#   geom_sf()
+
+# 3. prepping data for processing/analysis ----
+
+## 3.1 determine total population for study area ----
+
+## total population for 12 counties = 4,578,055
+pop.total <- sum(pop.est.00$P012001)
+
+## total youth population for 12 counties = 1,071,105
+pop.youth <- sum(pop.est.00$P012003 + pop.est.00$P012004 + pop.est.00$P012005 + pop.est.00$P012006 + pop.est.00$P012027 + pop.est.00$P012028 + pop.est.00$P012029 + pop.est.00$P012030)
+
+## total adult population population for 12 counties (eligible population) = 3,506,950
+pop.adult <- pop.total - pop.youth # creating new variable in census tract data for the adult population by subtracting youth population from the total
+
+## 3.2 calculating pop counts by age and sex in 5 year breaks where possible ----
+
+pop.est.01 <- pop.est.00 %>% 
+                mutate( # calculate new age by sex pop count variables
+                    
+                    # male
+                    m18_19 = P012007, 
+                    m20_24 = P012008+P012009+P012010, 
+                    m25_29 = P012011,
+                    m30_34 = P012012,
+                    m35_39 = P012013,
+                    m40_44 = P012014,
+                    m45_49 = P012015,
+                    m50_54 = P012016,
+                    m55_59 = P012017,
+                    m60_64 = P012018+P012019,
+                    m65_69 = P012020+P012021,
+                    m70_74 = P012022,
+                    m75_79 = P012023,
+                    m80_84 = P012024,
+                    m85 = P012025,
+                    
+                    # female
+                    f18_19 = P012031,
+                    f20_24 = P012032+P012033+P012034,
+                    f25_29 = P012035,
+                    f30_34 = P012036,
+                    f35_39 = P012037,
+                    f40_44 = P012038,
+                    f45_49 = P012039,
+                    f50_54 = P012040,
+                    f55_59 = P012041,
+                    f60_64 = P012042+P012043,
+                    f65_69 = P012044+P012045,
+                    f70_74 = P012046,
+                    f75_79 = P012047,
+                    f80_84 = P012048,
+                    f85 = P012049
+                ) %>%
+                dplyr::select(GEOID, area.tract, starts_with(c("m","f"))) # only retaining necessary variables 
+
+## 3.3 merging and subsetting to only pws with testing data (exposure) ----
+
+pws.shp.pfas <- merge(x = pws.shp, y = pws.pfastest, by = "PWS_ID", all = TRUE) %>% # merge pws shapefiles and pfas testing data, retaining merge matches on x and y
+  filter(tested == 1 & !is.na(area.pws) & !(OWNERSHIP %in% c("Mobile Home Park","Apartments","Institutional Recreational","Institutional Military","Institutional Health","Institutional Education","Institutional Correctional"))) %>% # retaining pws with testing data and non-missing and not an apartment, mobile home park, institutional corrections
+  dplyr::select(PWS_ID, WUDS_ID, area.pws, tested) # subsetting to only necessary variables
+
+
+# 4. census tracts ----
+
+## 4.1 determining overlap between census tracts and pws ----
+
+## visualizing overlap before processing to see what should be expected 
+# ggplot() +
+#   geom_sf(data = pws.shp.pfas, aes(color="red", fill = "red")) + # all polygons will be solid red
+#   geom_sf(data = pop.est.01, alpha = 0) + # will be a black outline of each polygon
+#   theme_void() +
+#   theme(legend.position = "none")
+
+## performing intersection to output a new shapefile with all overlapping polygons
+tract.pws.int <- unique(st_intersection(pws.shp.pfas, pop.est.01))
+
+## visualizing the results of the intersection with pws
+# ggplot() +
+#   geom_sf(data = pws.shp.pfas, aes(color="red", fill = "red")) + # all polygons will be solid red
+#   geom_sf(data = pop.est.01, alpha = 0, color = "white") + # will be a white outline of each polygon
+#   geom_sf(data = tract.pws.int, alpha = 0) + # will be a black outline of each polygon
+#   theme_void() +
+#   theme(legend.position = "none",
+#         panel.background = element_rect(fill = "grey"))
+
+## calculating area of intersection
+tract.pws.int$area.int <- st_area(tract.pws.int)
+  
+## calculating the % of tract area overlapping a pws 
+tract.pws.int$int.pct <- tract.pws.int$area.int/tract.pws.int$area.tract
+
+## 4.2 calculate exposed population ----
+
+## multiply the population for each tract by the proportion of the area that
+## overlaps with a pws then sum by tract to calculate the new weighted population 
+## which represents the relative population for each tract that are exposed to 
+## public drinking water tested for pfas
+
+tract.pws.int2 <- drop_units(tract.pws.int) %>%
+  group_by(GEOID) %>%
+  summarize(
+    
+    # weighted population
+    m18_19.wtd = sum(m18_19*int.pct), 
+    m20_24.wtd = sum(m20_24*int.pct), 
+    m25_29.wtd = sum(m25_29*int.pct),
+    m30_34.wtd = sum(m30_34*int.pct),
+    m35_39.wtd = sum(m35_39*int.pct),
+    m40_44.wtd = sum(m40_44*int.pct),
+    m45_49.wtd = sum(m45_49*int.pct),
+    m50_54.wtd = sum(m50_54*int.pct),
+    m55_59.wtd = sum(m55_59*int.pct),
+    m60_64.wtd = sum(m60_64*int.pct),
+    m65_69.wtd = sum(m65_69*int.pct),
+    m70_74.wtd = sum(m70_74*int.pct),
+    m75_79.wtd = sum(m75_79*int.pct),
+    m80_84.wtd = sum(m80_84*int.pct),
+    m85.wtd = sum(m85*int.pct),
+    f18_19.wtd = sum(f18_19*int.pct),
+    f20_24.wtd = sum(f20_24*int.pct),
+    f25_29.wtd = sum(f25_29*int.pct),
+    f30_34.wtd = sum(f30_34*int.pct),
+    f35_39.wtd = sum(f35_39*int.pct),
+    f40_44.wtd = sum(f40_44*int.pct),
+    f45_49.wtd = sum(f45_49*int.pct),
+    f50_54.wtd = sum(f50_54*int.pct),
+    f55_59.wtd = sum(f55_59*int.pct),
+    f60_64.wtd = sum(f60_64*int.pct),
+    f65_69.wtd = sum(f65_69*int.pct),
+    f70_74.wtd = sum(f70_74*int.pct),
+    f75_79.wtd = sum(f75_79*int.pct),
+    f80_84.wtd = sum(f80_84*int.pct),
+    f85.wtd = sum(f85*int.pct),
+    
+    # creating the aggregated raw variables to calculate the total exposed eligible sample
+    m18_19 = sum(m18_19), 
+    m20_24 = sum(m20_24), 
+    m25_29 = sum(m25_29),
+    m30_34 = sum(m30_34),
+    m35_39 = sum(m35_39),
+    m40_44 = sum(m40_44),
+    m45_49 = sum(m45_49),
+    m50_54 = sum(m50_54),
+    m55_59 = sum(m55_59),
+    m60_64 = sum(m60_64),
+    m65_69 = sum(m65_69),
+    m70_74 = sum(m70_74),
+    m75_79 = sum(m75_79),
+    m80_84 = sum(m80_84),
+    m85 = sum(m85),
+    f18_19 = sum(f18_19),
+    f20_24 = sum(f20_24),
+    f25_29 = sum(f25_29),
+    f30_34 = sum(f30_34),
+    f35_39 = sum(f35_39),
+    f40_44 = sum(f40_44),
+    f45_49 = sum(f45_49),
+    f50_54 = sum(f50_54),
+    f55_59 = sum(f55_59),
+    f60_64 = sum(f60_64),
+    f65_69 = sum(f65_69),
+    f70_74 = sum(f70_74),
+    f75_79 = sum(f75_79),
+    f80_84 = sum(f80_84),
+    f85 = sum(f85)
+  )
+
+## total adult pop from tracts that overlap with exposure data 
+study.area.pop <- round(sum(st_drop_geometry(dplyr::select(tract.pws.int2, ends_with(c("wtd")))) %>% rowSums()),0)
+
+## calculating the pct of the population that make up the weighted proportions
+tract.pws.int3 <- tract.pws.int2 %>%
+  mutate(
+    m18_19.wtd_pct = (m18_19.wtd/study.area.pop)*100, 
+    m20_24.wtd_pct = (m20_24.wtd/study.area.pop)*100, 
+    m25_29.wtd_pct = (m25_29.wtd/study.area.pop)*100,
+    m30_34.wtd_pct = (m30_34.wtd/study.area.pop)*100,
+    m35_39.wtd_pct = (m35_39.wtd/study.area.pop)*100,
+    m40_44.wtd_pct = (m40_44.wtd/study.area.pop)*100,
+    m45_49.wtd_pct = (m45_49.wtd/study.area.pop)*100,
+    m50_54.wtd_pct = (m50_54.wtd/study.area.pop)*100,
+    m55_59.wtd_pct = (m55_59.wtd/study.area.pop)*100,
+    m60_64.wtd_pct = (m60_64.wtd/study.area.pop)*100,
+    m65_69.wtd_pct = (m65_69.wtd/study.area.pop)*100,
+    m70_74.wtd_pct = (m70_74.wtd/study.area.pop)*100,
+    m75_79.wtd_pct = (m75_79.wtd/study.area.pop)*100,
+    m80_84.wtd_pct = (m80_84.wtd/study.area.pop)*100,
+    m85.wtd_pct = (m85.wtd/study.area.pop)*100,
+    f18_19.wtd_pct = (f18_19.wtd/study.area.pop)*100,
+    f20_24.wtd_pct = (f20_24.wtd/study.area.pop)*100,
+    f25_29.wtd_pct = (f25_29.wtd/study.area.pop)*100,
+    f30_34.wtd_pct = (f30_34.wtd/study.area.pop)*100,
+    f35_39.wtd_pct = (f35_39.wtd/study.area.pop)*100,
+    f40_44.wtd_pct = (f40_44.wtd/study.area.pop)*100,
+    f45_49.wtd_pct = (f45_49.wtd/study.area.pop)*100,
+    f50_54.wtd_pct = (f50_54.wtd/study.area.pop)*100,
+    f55_59.wtd_pct = (f55_59.wtd/study.area.pop)*100,
+    f60_64.wtd_pct = (f60_64.wtd/study.area.pop)*100,
+    f65_69.wtd_pct = (f65_69.wtd/study.area.pop)*100,
+    f70_74.wtd_pct = (f70_74.wtd/study.area.pop)*100,
+    f75_79.wtd_pct = (f75_79.wtd/study.area.pop)*100,
+    f80_84.wtd_pct = (f80_84.wtd/study.area.pop)*100,
+    f85.wtd_pct = (f85.wtd/study.area.pop)*100
+  )
+
+## merging intersected polygons back with the original census tract polygons
+tract.merge <- merge(
+  dplyr::select(pop.est.00, GEOID), # only retaining necessary variables
+  st_drop_geometry(tract.pws.int3),
+  by = "GEOID", keep.y = TRUE) # only keeping tracts that intersected with a pws
+
+## checking that the full tract polygon is used rather than only the intersection
+# ggplot(tract.merge) +
+#   geom_sf()
+
+## calculating a total % variable by summing all age by sex % values
+tract.merge$totalpop_pct <- st_drop_geometry(dplyr::select(tract.merge, ends_with('pct'))) %>% rowSums() 
+
+## deleting any remaining tracts that contributed 0% of their population 
+tract.merge <- filter(tract.merge, totalpop_pct != 0)
+
+## visually reviewing the results
+# ggplot(tract.merge) +
+#   geom_sf(aes(fill = totalpop_pct, color = totalpop_pct))
+
+# 5. municipalities ----
+
+## 5.1 determining overlap between census tracts and municipalities ----
+
+## creating a ds of ids for municipalities that intersect any pws
+pws.mun.int.ids <- st_intersection(pws.shp.pfas, mun.shp) %>%
+                     distinct(COUNTY, MUNICIPAL_, MUNICIPAL1) # municipality ids
+
+mun.int.shp <- st_as_sf(left_join(pws.mun.int.ids, mun.shp, by = c("COUNTY", "MUNICIPAL_", "MUNICIPAL1"))) # only keeping municipalities from intersection ds and converting back to sf object
+
+## visualizing overlap before processing to see what should be expected 
+# ggplot() +
+#   geom_sf(data = pop.est.01, color="red", aes(fill = "red")) + # all polygons will be solid red with a white outline
+#   geom_sf(data = mun.int.shp, alpha = 0) + # will be a black outline of each polygon
+#   theme_void() +
+#   theme(legend.position = "none")
+
+## performing intersection to output a new shapefile with all overlapping polygons
+tract.mun.int <- st_intersection(mun.int.shp, tract.merge) 
+
+## repairing simple geometry issues in municipality and pws shapefiles
+tract.mun.int <- st_make_valid(tract.mun.int)
+
+## visualizing the results of the intersection with pws
+# ggplot() +
+#   geom_sf(data = tract.merge, color="white", aes(fill = "red")) + # all polygons will be solid red with a white outline
+#   geom_sf(data = mun.int.shp, alpha = 0) + # will be a black outline of each polygon
+#   geom_sf(data = tract.mun.int, alpha = 0) + # will be a black outline of each polygon
+#   theme_void() +
+#   theme(legend.position = "none",
+#         panel.background = element_rect(fill = "grey"))
+
+## calculating area of intersection
+tract.mun.int$area.int <- st_area(tract.mun.int)
+
+## calculating the % of tract area overlapping a pws 
+tract.mun.int$int.pct <- tract.mun.int$area.int/tract.mun.int$area.mun
+
+## 5.2 calculate exposed population ----
+
+## multiply the population for each mun by the proportion of the area that
+## overlaps with a pws then sum by mun to calculate the new weighted population 
+## which represents the relative population for each mun that are exposed to 
+## public drinking water tested for pfas
+
+tract.mun.int2 <- drop_units(tract.mun.int) %>%
+  group_by(COUNTY, MUNICIPAL_, MUNICIPAL1) %>%
+  summarize(
+    
+    # weighted population
+    m18_19.wtd = sum(m18_19*int.pct), 
+    m20_24.wtd = sum(m20_24*int.pct), 
+    m25_29.wtd = sum(m25_29*int.pct),
+    m30_34.wtd = sum(m30_34*int.pct),
+    m35_39.wtd = sum(m35_39*int.pct),
+    m40_44.wtd = sum(m40_44*int.pct),
+    m45_49.wtd = sum(m45_49*int.pct),
+    m50_54.wtd = sum(m50_54*int.pct),
+    m55_59.wtd = sum(m55_59*int.pct),
+    m60_64.wtd = sum(m60_64*int.pct),
+    m65_69.wtd = sum(m65_69*int.pct),
+    m70_74.wtd = sum(m70_74*int.pct),
+    m75_79.wtd = sum(m75_79*int.pct),
+    m80_84.wtd = sum(m80_84*int.pct),
+    m85.wtd = sum(m85*int.pct),
+    f18_19.wtd = sum(f18_19*int.pct),
+    f20_24.wtd = sum(f20_24*int.pct),
+    f25_29.wtd = sum(f25_29*int.pct),
+    f30_34.wtd = sum(f30_34*int.pct),
+    f35_39.wtd = sum(f35_39*int.pct),
+    f40_44.wtd = sum(f40_44*int.pct),
+    f45_49.wtd = sum(f45_49*int.pct),
+    f50_54.wtd = sum(f50_54*int.pct),
+    f55_59.wtd = sum(f55_59*int.pct),
+    f60_64.wtd = sum(f60_64*int.pct),
+    f65_69.wtd = sum(f65_69*int.pct),
+    f70_74.wtd = sum(f70_74*int.pct),
+    f75_79.wtd = sum(f75_79*int.pct),
+    f80_84.wtd = sum(f80_84*int.pct),
+    f85.wtd = sum(f85*int.pct)
+  )
+
+## total adult pop from muns that overlap with exposure data 
+study.area.pop.mun <- round(sum(st_drop_geometry(dplyr::select(tract.mun.int2, ends_with("wtd"))) %>% rowSums()),0)
+
+## calculating the pct of the population that make up the weighted proportions
+tract.mun.int3 <- tract.mun.int2 %>%
+  mutate(
+    m18_19.wtd_pct = (m18_19.wtd/study.area.pop.mun)*100, 
+    m20_24.wtd_pct = (m20_24.wtd/study.area.pop.mun)*100, 
+    m25_29.wtd_pct = (m25_29.wtd/study.area.pop.mun)*100,
+    m30_34.wtd_pct = (m30_34.wtd/study.area.pop.mun)*100,
+    m35_39.wtd_pct = (m35_39.wtd/study.area.pop.mun)*100,
+    m40_44.wtd_pct = (m40_44.wtd/study.area.pop.mun)*100,
+    m45_49.wtd_pct = (m45_49.wtd/study.area.pop.mun)*100,
+    m50_54.wtd_pct = (m50_54.wtd/study.area.pop.mun)*100,
+    m55_59.wtd_pct = (m55_59.wtd/study.area.pop.mun)*100,
+    m60_64.wtd_pct = (m60_64.wtd/study.area.pop.mun)*100,
+    m65_69.wtd_pct = (m65_69.wtd/study.area.pop.mun)*100,
+    m70_74.wtd_pct = (m70_74.wtd/study.area.pop.mun)*100,
+    m75_79.wtd_pct = (m75_79.wtd/study.area.pop.mun)*100,
+    m80_84.wtd_pct = (m80_84.wtd/study.area.pop.mun)*100,
+    m85.wtd_pct = (m85.wtd/study.area.pop.mun)*100,
+    f18_19.wtd_pct = (f18_19.wtd/study.area.pop.mun)*100,
+    f20_24.wtd_pct = (f20_24.wtd/study.area.pop.mun)*100,
+    f25_29.wtd_pct = (f25_29.wtd/study.area.pop.mun)*100,
+    f30_34.wtd_pct = (f30_34.wtd/study.area.pop.mun)*100,
+    f35_39.wtd_pct = (f35_39.wtd/study.area.pop.mun)*100,
+    f40_44.wtd_pct = (f40_44.wtd/study.area.pop.mun)*100,
+    f45_49.wtd_pct = (f45_49.wtd/study.area.pop.mun)*100,
+    f50_54.wtd_pct = (f50_54.wtd/study.area.pop.mun)*100,
+    f55_59.wtd_pct = (f55_59.wtd/study.area.pop.mun)*100,
+    f60_64.wtd_pct = (f60_64.wtd/study.area.pop.mun)*100,
+    f65_69.wtd_pct = (f65_69.wtd/study.area.pop.mun)*100,
+    f70_74.wtd_pct = (f70_74.wtd/study.area.pop.mun)*100,
+    f75_79.wtd_pct = (f75_79.wtd/study.area.pop.mun)*100,
+    f80_84.wtd_pct = (f80_84.wtd/study.area.pop.mun)*100,
+    f85.wtd_pct = (f85.wtd/study.area.pop.mun)*100
+  )
+
+## merging intersected polygons back with the original census mun polygons
+mun.merge <- merge(
+  dplyr::select(mun.int.shp, COUNTY, MUNICIPAL_, MUNICIPAL1), # only retaining necessary variables
+  dplyr::select(st_drop_geometry(tract.mun.int3), COUNTY, MUNICIPAL_, MUNICIPAL1, ends_with("pct")), # only retaining necessary variables
+  by = c("COUNTY", "MUNICIPAL_", "MUNICIPAL1"), keep.y = TRUE) # only keeping muns that intersected with a pws
+
+## checking that the full mun polygon is used rather than only the intersection
+# ggplot(mun.merge) +
+#   geom_sf()
+
+## calculating a total % variable by summing all age by sex % values
+mun.merge$totalpop_pct <- st_drop_geometry(dplyr::select(mun.merge, ends_with('pct'))) %>% rowSums() 
+
+## deleting any remaining muns that contributed 0% of their population 
+mun.merge <- filter(mun.merge, totalpop_pct != 0)
+
+## visually reviewing the results
+# ggplot(mun.merge) +
+#   geom_sf(aes(fill = totalpop_pct, color = totalpop_pct))
+
+# 6. export data ----
+
+## 6.1 csv ----
+
+## prepping data for export
+
+tract.final.ds <- dplyr::select(
+                    st_drop_geometry(tract.merge),
+                    GEOID, ends_with('pct')
+)
+
+mun.final.ds <- st_drop_geometry(mun.merge)
+
+## tracts
+write_csv(tract.final.ds, file = "01_data/tract.final.ds.csv")
+
+## municipalities
+write_csv(mun.final.ds, file = "01_data/mun.final.ds.csv")
+
+## 6.2 Rdata -----
+
+## prepping data for export
+
+tract.final <- dplyr::select(
+                  tract.merge,
+                  GEOID, ends_with('pct')
+)
+
+mun.final <- mun.merge
+
+## tracts
+save(tract.final, file = "01_data/tract.final.Rdata")
+
+## municipalities
+save(mun.final, file = "01_data/mun.final.Rdata")
+
+## 6.3. shapefiles ----
+
+## tracts
+st_write(tract.final, "01_data/tract.final.shp")
+
+## municipalities
+st_write(mun.final, "01_data/mun.final.shp")
+
+## 6.4 deleting intermediate data ----
+
+rm(list=setdiff(ls(), c("tract.final", "mun.final")))
+
+# 7. figures ----
+
+## 7.1 creating county object for map borders ----
+
+pfas.counties <- filter(counties(state = "42", cb = TRUE, class = "sf"),
+                      NAMELSAD %in% c("Berks County", "Bucks County", "Carbon County", "Chester County", "Delaware County", "Lancaster County", "Lebanon County", "Lehigh County", "Monroe County", "Montgomery County", "Northampton County", "Schuylkill County")
+)
+
+# study.area.border <- st_union(pfas.counties)
+
+## 7.2 calculating quintiles for total pct by geo type ----
+
+## census tract
+tract.final$totalpop_pct.q <- cut(tract.final$totalpop_pct, quantile(tract.final$totalpop_pct, probs=c(0,.2,.4,.6,.8,1)), label=FALSE, include.lowest=TRUE) 
+
+## municipality
+mun.final$totalpop_pct.q <- cut(mun.final$totalpop_pct, quantile(mun.final$totalpop_pct, probs=c(0,.2,.4,.6,.8,1)), label=FALSE, include.lowest=TRUE) 
+
+## 7.3 maps ----
+
+### 7.3.1 census tracts ----
+
+## set color scheme
+cols.blues <- c("#eff3ff","#bdd7e7","#6baed6","#3182bd","#08306b")
+
+ggplot(tract.final) +
+  geom_sf(color = NA,  aes(fill = as.factor(totalpop_pct.q))) + # removes boundary lines around polygons
+  coord_sf(datum=NA, expand=FALSE) + # sets projection for map
+  geom_sf(data = pfas.counties, fill = NA, color = "grey25", size = 0.5) +
+  scale_fill_manual(values = cols.blues, labels = c('[0% < 20%]','[20% < 40%]','[40% < 60%]','[60% < 80%]','[80% - 100%]'), limits= c("1","2","3","4","5"), drop=FALSE, na.value = "white") +
+  scale_color_manual(values = cols.blues, limits= c("1","2","3","4","5"), drop=FALSE, na.value = "white") +
+  guides(fill=guide_legend(title="Population Density Quintiles", title.position = "bottom", title.hjust = 0.5), color="none") +
+  labs(caption="Adult Population with Exposure Data at the Census Tract\nLevel in 12 County Southeastern Pennsylvania Study Area") +   # subtitle... Census 2010 100% population counts
+  theme(
+    panel.background = element_rect(fill = "white"),
+    plot.background = element_rect(color = "black", size = 3),
+    title = element_text(family="Arial"),
+    plot.caption.position = "panel",
+    plot.caption = element_text(size=9,hjust=0.4),
+    legend.text = element_text(family="Arial", hjust = 0.5, size = 6),
+    legend.title = element_text(family="Arial", size = 9),
+    legend.key.size = unit(0.28, "cm"),
+    axis.title.x=element_blank(),
+    axis.text.x=element_blank(),
+    axis.ticks.x=element_blank(),
+    axis.title.y=element_blank(),
+    axis.text.y=element_blank(),
+    axis.ticks.y=element_blank(),
+    legend.position = "bottom"
+  ) +
+  ggspatial::annotation_north_arrow(
+    location = "br", which_north = "true",
+    pad_x = unit(0.1, "in"), pad_y = unit(0.1, "in"),
+    height = unit(0.6, "in"), width = unit(0.6, "in"),
+    style = ggspatial::north_arrow_fancy_orienteering(
+      fill = c("grey40", "white"),
+      line_col = "grey20"
+    )) 
+# +
+#   ggspatial::annotation_scale(
+#     location = "bl",
+#     pad_x=unit(3,"cm"), pad_y=unit(0,"cm"),
+#     plot_unit = "m",
+#     bar_cols = c("black", "white"),
+#     text_family = "Arial"
+#   )
+
+ggsave("02_output/ct_exposed_pop.png", height=4.74, width=3.8, units="in")
+
+### 7.3.2 municipalities ----
+
+ggplot(mun.final) +
+  geom_sf(color = NA,  aes(fill = as.factor(totalpop_pct.q))) + # removes boundary lines around polygons
+  coord_sf(datum=NA, expand=FALSE) + # sets projection for map
+  geom_sf(data = pfas.counties, fill = NA, color = "grey25", size = 0.5) +
+  scale_fill_manual(values = cols.blues, labels = c('[0% < 20%]','[20% < 40%]','[40% < 60%]','[60% < 80%]','[80% - 100%]'), limits= c("1","2","3","4","5"), drop=FALSE, na.value = "white") +
+  scale_color_manual(values = cols.blues, limits= c("1","2","3","4","5"), drop=FALSE, na.value = "white") +
+  guides(fill=guide_legend(title="Population Density Quintiles", title.position = "bottom", title.hjust = 0.5), color="none") +
+  labs(caption="Adult Population with Exposure Data by Municipality\nin 12 County Southeastern Pennsylvania Study Area") +   # subtitle... Census 2010 100% population counts
+  theme(
+    panel.background = element_rect(fill = "white"),
+    plot.background = element_rect(color = "black", size = 3),
+    title = element_text(family="Arial"),
+    plot.caption.position = "panel",
+    plot.caption = element_text(size=9,hjust=0.4),
+    legend.text = element_text(family="Arial", hjust = 0.5, size = 6),
+    legend.title = element_text(family="Arial", size = 9),
+    legend.key.size = unit(0.28, "cm"),
+    axis.title.x=element_blank(),
+    axis.text.x=element_blank(),
+    axis.ticks.x=element_blank(),
+    axis.title.y=element_blank(),
+    axis.text.y=element_blank(),
+    axis.ticks.y=element_blank(),
+    legend.position = "bottom"
+  ) +
+  ggspatial::annotation_north_arrow(
+    location = "br", which_north = "true",
+    pad_x = unit(0.1, "in"), pad_y = unit(0.1, "in"),
+    height = unit(0.6, "in"), width = unit(0.6, "in"),
+    style = ggspatial::north_arrow_fancy_orienteering(
+      fill = c("grey40", "white"),
+      line_col = "grey20"
+    )) 
+
+ggsave("02_output/mun_exposed_pop.png", height=4.74, width=3.8, units="in")
+
+# end of r script --------------------------------------------------------------
