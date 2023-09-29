@@ -223,6 +223,8 @@ ucmr5_long <- left_join(x=reduce_ucmr_to_study_pwsid, y=ucmr5, by = c("pws_id" =
                 drop_na(collectiondate) %>% 
                 clean_names()
 
+## calculating aggregate variables and wide ds ----
+
 # add number for collection date
 ucmr5_long <- left_join(
                 ucmr5_long,
@@ -236,7 +238,7 @@ ucmr5_long <- left_join(
               )
 
 #  tested for pfas and number of samples tested
-ucmr5_wide_test <- ucmr5_long %>% 
+ucmr5_wide <- ucmr5_long %>% 
                     group_by(pws_id) %>% 
                     mutate(num_samples = n()) %>% 
                     ungroup() %>% 
@@ -244,8 +246,8 @@ ucmr5_wide_test <- ucmr5_long %>%
                     mutate(tested = 1)
 
 # number of collection dates at each pws
-ucmr5_wide_test <- left_join(
-                    ucmr5_wide_test,
+ucmr5_wide <- left_join(
+                    ucmr5_wide,
                     ucmr5_long %>% 
                       distinct(pws_id, collectiondate) %>% 
                       group_by(pws_id) %>% 
@@ -255,8 +257,8 @@ ucmr5_wide_test <- left_join(
                     )
 
 # number of samples by date
-ucmr5_wide_test <- left_join(
-                    ucmr5_wide_test,
+ucmr5_wide <- left_join(
+                    ucmr5_wide,
                     ucmr5_long %>% 
                       filter(date == 1) %>% 
                       group_by(pws_id) %>%
@@ -266,8 +268,8 @@ ucmr5_wide_test <- left_join(
                     by = "pws_id"
                   )
 
-ucmr5_wide_test <- left_join(
-                    ucmr5_wide_test,
+ucmr5_wide <- left_join(
+                    ucmr5_wide,
                     ucmr5_long %>% 
                       filter(date == 2) %>% 
                       group_by(pws_id) %>%
@@ -277,8 +279,8 @@ ucmr5_wide_test <- left_join(
                     by = "pws_id"
                   )
 
-ucmr5_wide_test <- left_join(
-                    ucmr5_wide_test,
+ucmr5_wide <- left_join(
+                    ucmr5_wide,
                     ucmr5_long %>% 
                       filter(date == 3) %>% 
                       group_by(pws_id) %>%
@@ -288,9 +290,23 @@ ucmr5_wide_test <- left_join(
                     by = "pws_id"
                   )
 
+
+
+# number of samples from prior date at the same location. may need to add variable for name of location
+# date1 equals all samples on that date. four possible combinations:
+# date1, date2, date3
+# date1, date2
+# date1, date3
+# date2, date3
+
+
+
+
+
+
 # number of tests in groundwater and surface water and number of positive pfas in each
-ucmr5_wide_test <- left_join(
-                    ucmr5_wide_test,
+ucmr5_wide <- left_join(
+                    ucmr5_wide,
                     ucmr5_long %>% 
                       distinct(pws_id, collectiondate, facilitywatertype) %>% 
                       group_by(pws_id) %>% 
@@ -302,22 +318,22 @@ ucmr5_wide_test <- left_join(
                   )
 
 # how many pfas chemicals tested
-ucmr5_wide_test <- left_join(
-                    ucmr5_wide_test,
+ucmr5_wide <- left_join(
+                    ucmr5_wide,
                     ucmr5_long %>% 
                       distinct(pws_id, contaminant) %>% 
                       group_by(pws_id) %>% 
-                      summarise(num_contaminants = n())
+                      summarise(num_contaminants_tested = n())
                     ,
                     by = "pws_id"
                   )
 
 # any pfas detected
-ucmr5_wide_test <- left_join(
-                    ucmr5_wide_test,
+ucmr5_wide <- left_join(
+                    ucmr5_wide,
                     ucmr5_long %>% 
                       group_by(pws_id) %>% 
-                      summarise(any_pfas = sum(
+                      summarise(any_contaminants_above_mrl = sum(
                                             ifelse(
                                               sum(analyticalresultssign == "=") > 0,
                                               1, 0
@@ -329,22 +345,22 @@ ucmr5_wide_test <- left_join(
                   )
 
 # how many chemicals detected above mrl
-ucmr5_wide_test <- left_join(
-                    ucmr5_wide_test,
+ucmr5_wide <- left_join(
+                    ucmr5_wide,
                     ucmr5_long %>% 
                       filter(analyticalresultssign == "=") %>% 
                       distinct(pws_id, contaminant) %>% 
                       group_by(pws_id) %>% 
-                      summarise(num_detected_contaminants = n())
+                      summarise(num_contaminants_above_mrl = n())
                     ,
                     by = "pws_id"
 )
 
-ucmr5_wide_test["num_detected_contaminants"][is.na(ucmr5_wide_test["num_detected_contaminants"])] <- 0
+ucmr5_wide["num_contaminants_above_mrl"][is.na(ucmr5_wide["num_contaminants_above_mrl"])] <- 0
 
 # how many chemicals detected above mrl from groundwater samples
-ucmr5_wide_test <- left_join(
-                    ucmr5_wide_test,
+ucmr5_wide <- left_join(
+                    ucmr5_wide,
                     ucmr5_long %>% 
                       filter(facilitywatertype == "GW" & analyticalresultssign == "=") %>% 
                       distinct(pws_id, contaminant) %>% 
@@ -354,11 +370,11 @@ ucmr5_wide_test <- left_join(
                     by = "pws_id"
 )
 
-ucmr5_wide_test["num_gw_pfas_above_mrl"][is.na(ucmr5_wide_test["num_gw_pfas_above_mrl"])] <- 0
+ucmr5_wide["num_gw_pfas_above_mrl"][is.na(ucmr5_wide["num_gw_pfas_above_mrl"])] <- 0
 
 # how many chemicals detected above mrl from surface water samples
-ucmr5_wide_test <- left_join(
-                    ucmr5_wide_test,
+ucmr5_wide <- left_join(
+                    ucmr5_wide,
                     ucmr5_long %>% 
                       filter(facilitywatertype == "SW" & analyticalresultssign == "=") %>% 
                       distinct(pws_id, contaminant) %>% 
@@ -368,11 +384,11 @@ ucmr5_wide_test <- left_join(
                     by = "pws_id"
 )
 
-ucmr5_wide_test["num_sw_pfas_above_mrl"][is.na(ucmr5_wide_test["num_sw_pfas_above_mrl"])] <- 0
+ucmr5_wide["num_sw_pfas_above_mrl"][is.na(ucmr5_wide["num_sw_pfas_above_mrl"])] <- 0
 
 # which pfas chemicals over mrl?
-ucmr5_wide_test <- left_join(
-                      ucmr5_wide_test,
+ucmr5_wide <- left_join(
+                      ucmr5_wide,
                       ucmr5_long %>% 
                         mutate(
                           x11cl_pf3ouds_above_mrl = ifelse(contaminant == "11cl-pf3ouds" & analyticalresultssign == "=", 1, 0),
@@ -443,8 +459,8 @@ ucmr5_wide_test <- left_join(
 
 # sum of pfas chemicals above mrl performed by collection date 
 # to not add values from the same chemical more than once
-ucmr5_wide_test <- left_join(
-                    ucmr5_wide_test,
+ucmr5_wide <- left_join(
+                    ucmr5_wide,
                     ucmr5_long %>% 
                       filter(analyticalresultssign == "=" & date == 1) %>% 
                       distinct(pws_id, contaminant, sampleid, analyticalresultvalue) %>% 
@@ -454,8 +470,8 @@ ucmr5_wide_test <- left_join(
                     by = "pws_id"
 )
 
-ucmr5_wide_test <- left_join(
-                    ucmr5_wide_test,
+ucmr5_wide <- left_join(
+                    ucmr5_wide,
                     ucmr5_long %>% 
                       filter(analyticalresultssign == "=" & date == 2) %>% 
                       distinct(pws_id, contaminant, sampleid, analyticalresultvalue) %>% 
@@ -465,8 +481,8 @@ ucmr5_wide_test <- left_join(
                     by = "pws_id"
                   )
 
-ucmr5_wide_test <- left_join(
-                    ucmr5_wide_test,
+ucmr5_wide <- left_join(
+                    ucmr5_wide,
                     ucmr5_long %>% 
                       filter(analyticalresultssign == "=" & date == 3) %>% 
                       distinct(pws_id, contaminant, sampleid, analyticalresultvalue) %>% 
@@ -476,15 +492,214 @@ ucmr5_wide_test <- left_join(
                     by = "pws_id"
                   )
 
-ucmr5_wide_test <- ucmr5_wide_test %>% 
+ucmr5_wide <- ucmr5_wide %>% 
                     mutate(
                       pfas_sum_values_above_mrl_highest_detected = pmax(pfas_sum_values_above_mrl_1,pfas_sum_values_above_mrl_2,pfas_sum_values_above_mrl_3, na.rm = TRUE),
                       pfas_sum_values_above_mrl_lowest_detected = pmin(pfas_sum_values_above_mrl_1,pfas_sum_values_above_mrl_2,pfas_sum_values_above_mrl_3, na.rm = TRUE)
                     )
 
-ucmr5_wide_test[is.na(ucmr5_wide_test)] <- 0
 
-# pfas change went from over mrl to below mrl
+# of times detected over mrl by chemical?
+num_samples_by_chem <- left_join(
+                        ucmr5_long %>% 
+                          count(pws_id, contaminant, name = "num_samples_by_chem")
+                        ,
+                        ucmr5_long %>% 
+                          filter(analyticalresultssign == "=") %>% 
+                          count(pws_id, contaminant, name = "num_samples_by_chem_above_mrl")
+                        ,
+                        by = c("pws_id","contaminant")
+)
+
+ucmr5_wide <- left_join(
+                ucmr5_wide,
+                left_join(
+                  num_samples_by_chem %>%
+                    pivot_wider(
+                      id_cols = c(pws_id),
+                      names_from = contaminant,
+                      names_glue = "{contaminant}_num_samples",
+                      values_from = num_samples_by_chem
+                    ) %>% 
+                    clean_names()
+                  ,
+                  num_samples_by_chem %>%
+                    pivot_wider(
+                      id_cols = c(pws_id),
+                      names_from = contaminant,
+                      names_glue = "{contaminant}_num_samples_above_mrl",
+                      values_from = num_samples_by_chem_above_mrl
+                    ) %>% 
+                    clean_names()
+                    ,
+                    by = "pws_id"
+                )
+                ,
+                by = "pws_id"
+)
+
+ucmr5_wide[is.na(ucmr5_wide)] <- 0
+
+
+# change in detected pfas over time by chemical (e.g., went from over mrl to below mrl)
+
+## first widen the data with all sample results for each date for each chemical
+temp_wide <- ucmr5_long %>%
+              pivot_wider(
+                id_cols = c(pws_id),
+                names_from = c(contaminant,date),
+                names_glue = "{contaminant}_{date}",
+                values_from = analyticalresultssign
+              ) %>% 
+              clean_names()
+          
+
+## identify temporal pattern for each PWS and chemical
+
+### if cell contains "=" at all then 1, else 0. for all 3 dates
+### combine 3 date values into single column so.. 111, 000, etc..
+### use to make new column for change.. positive, negative, no change, non-linear
+
+### logic:
+### 100 (negative) 110 (negative) 111 (no change) 101 (non-linear)
+### 000 (no change) 010 (non-linear) 011 (positive) 001 (positive)
+
+mrl_time <- function(x){
+  temp_wide <- temp_wide %>% 
+    mutate(
+      !!paste0(x, "_time") := 
+        str_c(
+          ifelse(grepl("=", !!sym(paste0(x, "_1"))) == TRUE, 1, 0),
+          ifelse(grepl("=", !!sym(paste0(x, "_2"))) == TRUE, 1, 0),
+          ifelse(grepl("=", !!sym(paste0(x, "_3"))) == TRUE, 1, 0),
+          sep = ""
+        )
+      )
+  return(temp_wide)
+}
+
+time_status <- function(x){
+  temp_wide <- temp_wide %>% 
+    mutate(
+      !!paste0(x, "_time_change") := 
+        case_when(
+          get(!!paste0(x, "_time")) %in% c("100", "110") ~ "Negative",
+          get(!!paste0(x, "_time")) %in% c("011", "001") ~ "Positive",      
+          get(!!paste0(x, "_time")) %in% c("111", "000") ~ "No change",      
+          get(!!paste0(x, "_time")) %in% c("101", "010") ~ "Non-linear"
+        )
+    )
+  return(temp_wide)
+}
+
+pfas_chems <- c("x11cl_pf3ouds","x4_2_fts","x6_2_fts","x8_2_fts","x9cl_pf3ons","adona","hfpo_da","nfdha","pfba","pfbs","pfda","pfdoa","pfeesa","pfhpa","pfhps","pfhxa","pfhxs","pfmba","pfmpa","pfna","pfoa","pfos","pfpea","pfpes","pfuna")
+
+for (i in pfas_chems) {
+  temp_wide <- mrl_time(i)
+  temp_wide <- time_status(i)
+}
+
+### NOTE: The tests on different dates are not necessarily sampled from the same location.
+### What the final variable shows is whether or not there was a change over time in the PWS in general.
+### This could mean that on collection date 1, a sample in one well for the PWS could have tested positive but then
+### on collection date 2 for the same PWS, no sample was taken at the original well but a new sample was
+### taken at a a different well and that result was negative. This result would look like PFAS contamination
+### in the PWS is decreasing, but it is possible the second well was never contaminated.
+
+ucmr5_wide <- left_join(ucmr5_wide, temp_wide, by = "pws_id")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+mrl_by_date_by_chem <- left_join(
+                        ucmr5_long %>% 
+                          count(pws_id, contaminant, name = "num_samples_by_chem")
+                        ,
+                        ucmr5_long %>% 
+                          filter(analyticalresultssign == "=") %>% 
+                          count(pws_id, contaminant, name = "num_samples_by_chem_above_mrl")
+                        ,
+                        by = c("pws_id","contaminant")
+                      )
+
+ucmr5_wide <- left_join(
+                ucmr5_wide,
+                left_join(
+                  num_samples_by_chem %>%
+                    pivot_wider(
+                      id_cols = c(pws_id),
+                      names_from = contaminant,
+                      names_glue = "{contaminant}_num_samples",
+                      values_from = num_samples_by_chem
+                    ) %>% 
+                    clean_names()
+                  ,
+                  num_samples_by_chem %>%
+                    pivot_wider(
+                      id_cols = c(pws_id),
+                      names_from = contaminant,
+                      names_glue = "{contaminant}_num_samples_above_mrl",
+                      values_from = num_samples_by_chem_above_mrl
+                    ) %>% 
+                    clean_names()
+                  ,
+                  by = "pws_id"
+                )
+                ,
+                by = "pws_id"
+              )
+
+
+
+
+
+
+    summarise(
+      x11cl_pf3ouds_num_above_mrl = tally(pws_id,contaminant),
+      x4_2fts_num_above_mrl = tally(pws_id,contaminant),
+      x6_2fts_num_above_mrl = tally(pws_id,contaminant),
+      x8_2fts_num_above_mrl = tally(pws_id,contaminant),
+      x9cl_pf3ons_num_above_mrl = tally(pws_id,contaminant),
+      adona_num_above_mrl = tally(pws_id,contaminant),
+      hfpo_da_num_above_mrl = tally(pws_id,contaminant),
+      netfosaa_num_above_mrl = tally(pws_id,contaminant),
+      nfdha_num_above_mrl = tally(pws_id,contaminant),
+      nmefosaa_num_above_mrl = tally(pws_id,contaminant),
+      pfba_num_above_mrl = tally(pws_id,contaminant),
+      pfbs_num_above_mrl = tally(pws_id,contaminant),
+      pfda_num_above_mrl = tally(pws_id,contaminant),
+      pfdoa_num_above_mrl = tally(pws_id,contaminant),
+      pfeesa_num_above_mrl = tally(pws_id,contaminant),
+      pfhpa_num_above_mrl = tally(pws_id,contaminant),
+      pfhps_num_above_mrl = tally(pws_id,contaminant),
+      pfhxa_num_above_mrl = tally(pws_id,contaminant),
+      pfhxs_num_above_mrl = tally(pws_id,contaminant),
+      pfmba_num_above_mrl = tally(pws_id,contaminant),
+      pfmpa_num_above_mrl = tally(pws_id,contaminant),
+      pfna_num_above_mrl = tally(pws_id,contaminant),
+      pfoa_num_above_mrl = tally(pws_id,contaminant),
+      pfos_num_above_mrl = tally(pws_id,contaminant),
+      pfpea_num_above_mrl = tally(pws_id,contaminant),
+      pfpes_num_above_mrl = tally(pws_id,contaminant),
+      pfta_num_above_mrl = tally(pws_id,contaminant),
+      pftrda_num_above_mrl = tally(pws_id,contaminant),
+      pfuna_num_above_mrl = tally(pws_id,contaminant)
+    )
+#   ,
+#   by = "pws_id"
+# )
+
+
 
 
 
