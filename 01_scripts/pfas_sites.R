@@ -616,54 +616,6 @@ ucmr5_wide <- left_join(ucmr5_wide, temp_wide, by = "pws_id")
 
 
 
-
-
-
-
-
-mrl_by_date_by_chem <- left_join(
-                        ucmr5_long %>% 
-                          count(pws_id, contaminant, name = "num_samples_by_chem")
-                        ,
-                        ucmr5_long %>% 
-                          filter(analyticalresultssign == "=") %>% 
-                          count(pws_id, contaminant, name = "num_samples_by_chem_above_mrl")
-                        ,
-                        by = c("pws_id","contaminant")
-                      )
-
-ucmr5_wide <- left_join(
-                ucmr5_wide,
-                left_join(
-                  num_samples_by_chem %>%
-                    pivot_wider(
-                      id_cols = c(pws_id),
-                      names_from = contaminant,
-                      names_glue = "{contaminant}_num_samples",
-                      values_from = num_samples_by_chem
-                    ) %>% 
-                    clean_names()
-                  ,
-                  num_samples_by_chem %>%
-                    pivot_wider(
-                      id_cols = c(pws_id),
-                      names_from = contaminant,
-                      names_glue = "{contaminant}_num_samples_above_mrl",
-                      values_from = num_samples_by_chem_above_mrl
-                    ) %>% 
-                    clean_names()
-                  ,
-                  by = "pws_id"
-                )
-                ,
-                by = "pws_id"
-              )
-
-
-
-
-
-
     summarise(
       x11cl_pf3ouds_num_above_mrl = tally(pws_id,contaminant),
       x4_2fts_num_above_mrl = tally(pws_id,contaminant),
