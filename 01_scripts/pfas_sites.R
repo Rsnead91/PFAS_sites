@@ -4,7 +4,7 @@
 
 if (!require("pacman")) install.packages("pacman")
 
-pacman::p_load('tidycensus','tidyverse','ggspatial','arcpullr','tigris','raster','readxl','units','sf','ggmap','reshape2','janitor','ggpattern','tidygeocoder')
+pacman::p_load('tidycensus','tidyverse','ggspatial','arcpullr','tigris','raster','pdftools','readxl','units','sf','ggmap','reshape2','janitor','ggpattern','tidygeocoder')
 
 # 2. load data ----
 
@@ -198,14 +198,294 @@ pws.shp.pfas_inst <- merge(x = pws.shp, y = pws.pfastest, by = "PWS_ID", all = T
 
 
 
+## 2.4 pa dep sampling data ----
+
+## this step was performed with the support of this blog post: https://medium.com/swlh/the-adventure-of-pdf-to-data-frame-in-r-f90609035600
+
+### 2019 ----
+
+## url to pa department of environmental protections sampling data of the PDF file
+pdf_url <- "https://files.dep.state.pa.us/Water/DrinkingWater/Perfluorinated%20Chemicals/SamplingResults/PFASPhase1ResultsSummary.pdf"
+
+## extract text from the PDF
+pdf_text <- pdf_text(pdf_url) %>%
+  str_split("\n") # splitting text into rows
+
+## get rid of first 1 to 7 lines
+for(i in 1:3) { 
+  pdf_text[[i]] <- pdf_text[[i]][-1:-7]
+}
+
+## removing unnecessary lines at the end of the page
+pdf_text[[1]]  <- pdf_text[[1]][-42]
+pdf_text[[2]]  <- pdf_text[[2]][-42]
+pdf_text[[3]]  <- pdf_text[[3]][-15:-27]
+
+## removing excess spaces between substrings and splitting rows by common string patterns
+pdf_text <- pdf_text %>%
+  str_squish() %>%
+  strsplit(split= "\\,\\s\\\"")
+
+## removing common substring at the start of each page
+for(i in 1:length(pdf_text)) {
+  pdf_text[[i]][1] <- pdf_text[[i]][1] %>%
+    stringr::str_extract("(?<=c[:punct:]\\\").*")
+}
+
+## removing common substring at the end of each line
+for(i in 1:length(pdf_text)) {
+  for(j in 1:length(pdf_text[[i]])) {
+    pdf_text[[i]][j] <- pdf_text[[i]][j] %>%
+      stringr::str_extract(".*(?=\")")
+  }
+}
+
+## separating characters
+for(i in 1:length(pdf_text)) {
+  for(j in 1:length(pdf_text)){
+    pdf_text[[i]][j] %>% str_extract(".*[:alpha:]+|\\&|\\-") %>% 
+      print() #extracts the words
+  }
+}
+
+## put into a single column of a data frame
+names_ex = list()
+for(i in 1:length(pdf_text)) {
+  words <- pdf_text[[i]] #%>% str_extract(".*[:alpha:]+|\\&|\\-") 
+  words_df <- data.frame(words) #turns into data frame for list
+  names_ex[[i]] <- words_df
+  NH_names <- dplyr::bind_rows(names_ex) %>% drop_na() # removing black row at the end of each page
+}
+
+for (i in 1:nrow(NH_names)) {
+  NH_names$loc[[i]] <- str_locate_all(NH_names$words, " ")[[i]][4]
+}
+
+left_df <- data.frame(left = str_sub(NH_names$words, end = unlist(NH_names$loc)))
+
+for(i in 1:nrow(NH_names)) {
+  NH_names$loc[[i]] <- str_locate_all(NH_names$words, " ")[[i]][nrow(str_locate_all(NH_names$words, " ")[[i]])-7]
+}
+
+right_df <- data.frame(right = str_sub(NH_names$words, start = unlist(NH_names$loc)))
+
+ds <- cbind(left_df,right_df)
+
+dep_sampling_2019 <- dplyr::select(cbind(tidyr::separate(ds, col = left, into = c("drop00","drop01","pwsid","drop02","drop03"), sep=" "), 
+                                         tidyr::separate(ds, col = right, into = c("drop04","date","pfas01","pfas02","pfas03","pfas04","pfas05","pfas06","pfas07"), sep=" ")),
+                                   -left, -right, -starts_with("drop")
+) %>%
+  mutate_all(~ replace(., . == "ND", "0"))
+
+colnames(dep_sampling_2019) <- dep_colnames <- c("pwsid","collectiondate","pfbs","pfhpa","pfhxs","pfna","pfos","pfoa","sum_pfos_pfoa")
+
+
+### 2020 ----
+
+## url to pa department of environmental protections sampling data of the PDF file
+pdf_url <- "https://files.dep.state.pa.us/Water/DrinkingWater/Perfluorinated%20Chemicals/SamplingResults/SUMMARY_OF_RESULTS_PFAS_PHASE_1_2020.pdf"
+
+## extract text from the PDF
+pdf_text <- pdf_text(pdf_url) %>%
+  str_split("\n") # splitting text into rows
+
+## get rid of first 1 to 7 lines
+for(i in 1:2) { 
+  pdf_text[[i]] <- pdf_text[[i]][-1:-7]
+}
+
+## removing unnecessary lines at the end of the page
+pdf_text[[1]]  <- pdf_text[[1]][-86]
+pdf_text[[2]]  <- pdf_text[[2]][-30:-41]
+
+## removing excess spaces between substrings and splitting rows by common string patterns
+pdf_text <- pdf_text %>%
+  str_squish() %>%
+  strsplit(split= "\\,\\s\\\"")
+
+## removing common substring at the start of each page
+for(i in 1:length(pdf_text)) {
+  pdf_text[[i]][1] <- pdf_text[[i]][1] %>%
+    stringr::str_extract("(?<=c[:punct:]\\\").*")
+}
+
+## removing common substring at the end of each line
+for(i in 1:length(pdf_text)) {
+  for(j in 1:length(pdf_text[[i]])) {
+    pdf_text[[i]][j] <- pdf_text[[i]][j] %>%
+      stringr::str_extract(".*(?=\")")
+  }
+}
+
+## separating characters
+for(i in 1:length(pdf_text)) {
+  for(j in 1:length(pdf_text)){
+    pdf_text[[i]][j] %>% str_extract(".*[:alpha:]+|\\&|\\-") %>% 
+      print() #extracts the words
+  }
+}
+
+## put into a single column of a data frame
+names_ex = list()
+for(i in 1:length(pdf_text)) {
+  words <- pdf_text[[i]] %>% str_extract(".*[:alpha:]+|\\&|\\-") 
+  words_df <- data.frame(words) #turns into data frame for list
+  names_ex[[i]] <- words_df
+  NH_names <- dplyr::bind_rows(names_ex) %>% drop_na() # removing black row at the end of each page
+}
+# print(NH_names)
+
+for(i in 1:nrow(NH_names)) {
+  NH_names$loc[[i]] <- str_locate_all(NH_names$words, " ")[[i]][nrow(str_locate_all(NH_names$words, " ")[[i]])-20]
+}
+
+right <- str_sub(NH_names$words, start = unlist(NH_names$loc))
+ds <- cbind(NH_names,right)
+
+for(i in 1:nrow(NH_names)) {
+  NH_names$loc[[i]] <- str_locate_all(NH_names$words, " ")[[i]][5]
+}
+
+left <- str_sub(NH_names$words, end = unlist(NH_names$loc))
+ds <- cbind(ds,left)
+
+dep_sampling_2020 <- dplyr::select(cbind(tidyr::separate(ds, col = left, into = c("drop00","drop01","pwsid","drop02","drop03"), sep=" "), 
+                                         tidyr::separate(ds, col = right, into = c("drop04","date","pfas01","pfas02","pfas03","pfas04","pfas05","pfas06","pfas07","pfas08","pfas09","pfas10","pfas11","pfas12","pfas13","pfas14","pfas15","pfas16","pfas17","pfas18","pfas19","drop05"), sep=" ")),
+                                   -words, -loc, -left, -right, -starts_with("drop")
+                      ) %>%
+                        mutate_all(~ replace(., . == "ND", "0"))
+
+colnames(dep_sampling_2020) <- dep_colnames <- c("pwsid","collectiondate","x11cl_pf3ouds","x9cl_pf3ons","adona","hfpo_da","netfosaa","nmefosaa","pfbs","pfda","pfdoa","pfhpa","pfhxs","pfhxa","pfna","pfos","pfoa","pfta","pftrda","pfuna","sum_pfos_pfoa")
+
+rm(ds,left,right,NH_names,pdf_text,pdf_url,names_ex,words_df)
+
+
+### 2021 ----
+
+## url to pa department of environmental protections sampling data of the PDF file
+pdf_url <- "https://files.dep.state.pa.us/Water/DrinkingWater/Perfluorinated%20Chemicals/SamplingResults/PFAS_Sampling_Final_Results_May_2021.pdf"
+
+## extract text from the PDF
+pdf_text <- pdf_text(pdf_url) %>%
+  str_split("\n") # splitting text into rows
+
+## get rid of first 1 to 11 lines
+for(i in 1:6) { 
+  pdf_text[[i]] <- pdf_text[[i]][-1:-11]
+}
+
+## getting rid of definitions at the end of the last page
+pdf_text[[6]]  <- pdf_text[[6]][-23:-34]
+
+## removing excess spaces between substrings and splitting rows by common string patterns
+pdf_text <- pdf_text %>%
+  str_squish() %>%
+  strsplit(split= "\\,\\s\\\"")
+
+## removing common substring at the start of each page
+for(i in 1:length(pdf_text)) {
+  pdf_text[[i]][1] <- pdf_text[[i]][1] %>%
+    stringr::str_extract("(?<=c[:punct:]\\\").*")
+}
+
+## removing common substring at the end of each line
+for(i in 1:length(pdf_text)) {
+  for(j in 1:length(pdf_text[[i]])) {
+    pdf_text[[i]][j] <- pdf_text[[i]][j] %>%
+      stringr::str_extract(".*(?=\")")
+  }
+}
+
+## separating characters
+for(i in 1:length(pdf_text)) {
+  for(j in 1:length(pdf_text)){
+    pdf_text[[i]][j] %>% str_extract(".*[:alpha:]+|\\&|\\-") %>% 
+      print() #extracts the words
+  }
+}
+
+## put into a single column of a data frame
+names_ex = list()
+for(i in 1:length(pdf_text)) {
+  words <- pdf_text[[i]] %>% str_extract(".*[:alpha:]+|\\&|\\-") 
+  words_df <- data.frame(words) #turns into data frame for list
+  names_ex[[i]] <- words_df
+  NH_names <- dplyr::bind_rows(names_ex) %>% drop_na() # removing black row at the end of each page
+}
+# print(NH_names)
+
+for(i in 1:nrow(NH_names)) {
+  NH_names$loc[[i]] <- str_locate_all(NH_names$words, " ")[[i]][nrow(str_locate_all(NH_names$words, " ")[[i]])-20]
+}
+
+right <- str_sub(NH_names$words, start = unlist(NH_names$loc))
+ds <- cbind(NH_names,right)
+
+for(i in 1:nrow(NH_names)) {
+  NH_names$loc[[i]] <- str_locate_all(NH_names$words, " ")[[i]][5]
+}
+
+left <- str_sub(NH_names$words, end = unlist(NH_names$loc))
+ds <- cbind(ds,left)
+
+dep_sampling_2021 <- dplyr::select(cbind(tidyr::separate(ds, col = left, into = c("drop00","drop01","pwsid","drop02","drop03"), sep=" "), 
+                               tidyr::separate(ds, col = right, into = c("drop04","date","pfas01","pfas02","pfas03","pfas04","pfas05","pfas06","pfas07","pfas08","pfas09","pfas10","pfas11","pfas12","pfas13","pfas14","pfas15","pfas16","pfas17","pfas18","pfas19","drop05"), sep=" ")),
+                         -words, -loc, -left, -right, -starts_with("drop")
+                    ) %>%
+                      mutate_all(~ replace(., . == "ND", "0"))
+
+colnames(dep_sampling_2021) <- dep_colnames <- c("pwsid","collectiondate","x11cl_pf3ouds","x9cl_pf3ons","adona","hfpo_da","netfosaa","nmefosaa","pfda","pfdoa","pfta","pftrda","pfhxa","pfuna","pfbs","pfhpa","pfhxs","pfna","pfos","pfoa","sum_pfos_pfoa")
+
+
+rm(ds,left,right,NH_names,pdf_text,pdf_url,names_ex,words_df)
+
+
+
+# CHECK FOR DUPLICATES BETWEEN 2020 AND 2021 PDFs
+# merge dep with ucmr to subset to the right counties
+
+
+dep_sampling_2019_2020_2021 <- rbind(
+                                cbind(
+                                  dep_sampling_2019, # adding blank columns to stack all three data sets
+                                  data.frame(x11cl_pf3ouds = "", x9cl_pf3ons = "", adona = "", hfpo_da = "", netfosaa = "", nmefosaa = "", pfda = "", pfdoa = "", pfta = "", pftrda = "", pfuna = "", pfhxa = "")
+                                ),
+                                dep_sampling_2020,
+                                dep_sampling_2021
+                                ) %>% 
+                              distinct()
+
+
+# save DEP long file
+
+# save(dep_sampling_2019_2021, file = "00_data/dep_sampling_2019_2021.Rdata")
+
+
+
+
+
+
+
+
+
+
+
+## ucmr 3 data ----
+
+
+
+
 
 
 
 ## ucmr 5 data ----
 
+# the following chems are in dep sampling but not ucmr 5: netfosaa, nmefosaa, pfta, pftrda
+# the following chems are in ucmr 5 but not dep sampling: pfpea, pfpes, pfmba, pfmpa, pfhps, pfeesa, pfba, nfdha, x4_2_fts, x6_2_fts, x8_2_fts
+
 ucmr5 <- read_tsv("00_data/UCMR5_ALL_MA_WY.txt") %>% 
           filter(State == "PA" & Contaminant != "lithium") %>% 
-          dplyr::select(PWSID, CollectionDate, Contaminant, SampleID, FacilityWaterType, MRL, Units, AnalyticalResultsSign, AnalyticalResultValue) %>% 
+          dplyr::select(PWSID, CollectionDate, Contaminant, SampleID, SamplePointName, FacilityWaterType, MRL, Units, AnalyticalResultsSign, AnalyticalResultValue) %>% 
           mutate(
             PWSID = substr(PWSID,3,10),
             Contaminant = tolower(Contaminant)
@@ -224,6 +504,13 @@ ucmr5_long <- left_join(x=reduce_ucmr_to_study_pwsid, y=ucmr5, by = c("pws_id" =
                 clean_names()
 
 ## calculating aggregate variables and wide ds ----
+
+# hierarchy:
+## pwsid
+### collection date
+#### contaminent
+##### sample site
+
 
 # add number for collection date
 ucmr5_long <- left_join(
@@ -244,6 +531,16 @@ ucmr5_wide <- ucmr5_long %>%
                     ungroup() %>% 
                     distinct(pws_id, num_samples) %>% 
                     mutate(tested = 1)
+
+# number of sample locations
+ucmr5_wide <- left_join(
+                ucmr5_wide,
+                ucmr5_long %>%
+                group_by(pws_id) %>%
+                summarize(num_sample_locations = n_distinct(unlist(strsplit(paste(samplepointname, collapse = " "), " "))))
+                ,
+                by = "pws_id"
+)
 
 # number of collection dates at each pws
 ucmr5_wide <- left_join(
@@ -298,6 +595,30 @@ ucmr5_wide <- left_join(
 # date1, date2
 # date1, date3
 # date2, date3
+
+# pws_id contaminant collectiondate sample_num sample_location_name
+# 1 1 1 1 blue
+# 1 1 1 1 red
+# 1 1 2 1 blue
+# 2 1 1 1 blue
+
+
+view(
+  ucmr5_long %>% 
+    group_by(pws_id, contaminant, collectiondate) %>% 
+    dplyr::select(pws_id, contaminant, collectiondate, sampleid, samplepointname, date)
+)
+
+
+group - pws_id, contaminant
+view(arrange(ucmr5_long, pws_id, contaminant, collectiondate, sampleid))
+
+
+
+test <- ucmr5_long %>%
+          group_by(pws_id, contaminant) %>%
+          summarize(matches = n_distinct(unlist(strsplit(paste(samplepointname, collapse = " "), " "))))
+
 
 
 
@@ -563,6 +884,7 @@ temp_wide <- ucmr5_long %>%
 ### logic:
 ### 100 (negative) 110 (negative) 111 (no change) 101 (non-linear)
 ### 000 (no change) 010 (non-linear) 011 (positive) 001 (positive)
+### 0NN (no longitudinal sample) 00N 
 
 mrl_time <- function(x){
   temp_wide <- temp_wide %>% 
@@ -605,6 +927,7 @@ for (i in pfas_chems) {
 ### on collection date 2 for the same PWS, no sample was taken at the original well but a new sample was
 ### taken at a a different well and that result was negative. This result would look like PFAS contamination
 ### in the PWS is decreasing, but it is possible the second well was never contaminated.
+### Also, some samples were taken within days of each other at different sites.
 
 ucmr5_wide <- left_join(ucmr5_wide, temp_wide, by = "pws_id")
 
@@ -771,30 +1094,7 @@ ucmr5_long %>%
 
 
 
-# permutations and hierarchy
-# pwsid
-## collection date
-### contaminent
-#### sample site + water type
 
-
-#to do multiple columns, have to put setDT around data name
-
-# ucmr5_wide1 <- dcast(
-#                 data = ucmr5_long,
-#                 formula = pws_id + collection_date + sample_id + facility_water_type ~ contaminant,
-#                 value.var = "mrl",
-#                 fun.aggregation = NULL
-#                 )
-
-
-# library(tidyr)
-
-
-
-
-# calculate temporal descriptives from long format
-# create agg data set from long format, any pfas, any pfas over, by GW/SW, by contaminant..
 
 
 
