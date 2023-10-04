@@ -271,14 +271,22 @@ right_df <- data.frame(right = str_sub(NH_names$words, start = unlist(NH_names$l
 
 ds <- cbind(left_df,right_df)
 
-dep_sampling_2019 <- dplyr::select(cbind(tidyr::separate(ds, col = left, into = c("drop00","drop01","pwsid","drop02","drop03"), sep=" "), 
-                                         tidyr::separate(ds, col = right, into = c("drop04","date","pfas01","pfas02","pfas03","pfas04","pfas05","pfas06","pfas07"), sep=" ")),
+dep_sampling_2019_wide <- dplyr::select(cbind(tidyr::separate(ds, col = left, into = c("drop00","drop01","pwsid","drop02","drop03"), sep=" "), 
+                                         tidyr::separate(ds, col = right, into = c("drop04","date","pfas01","pfas02","pfas03","pfas04","pfas05","pfas06","drop05"), sep=" ")),
                                    -left, -right, -starts_with("drop")
 ) %>%
   mutate_all(~ replace(., . == "ND", "0"))
 
-colnames(dep_sampling_2019) <- dep_colnames <- c("pwsid","collectiondate","pfbs","pfhpa","pfhxs","pfna","pfos","pfoa","sum_pfos_pfoa")
+colnames(dep_sampling_2019_wide) <- c("pwsid","collectiondate","pfbs","pfhpa","pfhxs","pfna","pfos","pfoa")
 
+dep_sampling_2019 <- dep_sampling_2019_wide %>% 
+                        pivot_longer(
+                          cols = c("pfbs","pfhpa","pfhxs","pfna","pfos","pfoa"),
+                          names_to = "contaminant",
+                          values_to = "analyticalresultvalue"
+                        )
+
+rm(ds,left,right,NH_names,pdf_text,pdf_url,names_ex,words_df)
 
 ### 2020 ----
 
@@ -349,13 +357,28 @@ for(i in 1:nrow(NH_names)) {
 left <- str_sub(NH_names$words, end = unlist(NH_names$loc))
 ds <- cbind(ds,left)
 
-dep_sampling_2020 <- dplyr::select(cbind(tidyr::separate(ds, col = left, into = c("drop00","drop01","pwsid","drop02","drop03"), sep=" "), 
-                                         tidyr::separate(ds, col = right, into = c("drop04","date","pfas01","pfas02","pfas03","pfas04","pfas05","pfas06","pfas07","pfas08","pfas09","pfas10","pfas11","pfas12","pfas13","pfas14","pfas15","pfas16","pfas17","pfas18","pfas19","drop05"), sep=" ")),
+dep_sampling_2020_wide <- dplyr::select(cbind(tidyr::separate(ds, col = left, into = c("drop00","drop01","pwsid","drop02","drop03"), sep=" "), 
+                                         tidyr::separate(ds, col = right, into = c("drop04","date","pfas01","pfas02","pfas03","pfas04","pfas05","pfas06","pfas07","pfas08","pfas09","pfas10","pfas11","pfas12","pfas13","pfas14","pfas15","pfas16","pfas17","pfas18","drop05","drop06"), sep=" ")),
                                    -words, -loc, -left, -right, -starts_with("drop")
                       ) %>%
                         mutate_all(~ replace(., . == "ND", "0"))
 
-colnames(dep_sampling_2020) <- dep_colnames <- c("pwsid","collectiondate","x11cl_pf3ouds","x9cl_pf3ons","adona","hfpo_da","netfosaa","nmefosaa","pfbs","pfda","pfdoa","pfhpa","pfhxs","pfhxa","pfna","pfos","pfoa","pfta","pftrda","pfuna","sum_pfos_pfoa")
+colnames(dep_sampling_2020_wide) <- c("pwsid","collectiondate","x11cl_pf3ouds","x9cl_pf3ons","adona","hfpo_da","netfosaa","nmefosaa","pfbs","pfda","pfdoa","pfhpa","pfhxs","pfhxa","pfna","pfos","pfoa","pfta","pftrda","pfuna")
+
+dep_sampling_2020 <- dep_sampling_2020_wide %>% 
+  pivot_longer(
+    cols = c("x11cl_pf3ouds","x9cl_pf3ons","adona","hfpo_da","netfosaa","nmefosaa","pfbs","pfda","pfdoa","pfhpa","pfhxs","pfhxa","pfna","pfos","pfoa","pfta","pftrda","pfuna"),
+    names_to = "contaminant",
+    values_to = "analyticalresultvalue"
+  ) %>% 
+  mutate(
+    contaminant = case_when(
+      contaminant == "x11cl_pf3ouds" ~ "11cl-pf3ouds",
+      contaminant == "x9cl_pf3ons" ~ "9cl-pf3ons",
+      contaminant == "hfpo_da" ~ "hfpo-da",
+      TRUE ~ contaminant
+    )
+  )
 
 rm(ds,left,right,NH_names,pdf_text,pdf_url,names_ex,words_df)
 
@@ -428,54 +451,51 @@ for(i in 1:nrow(NH_names)) {
 left <- str_sub(NH_names$words, end = unlist(NH_names$loc))
 ds <- cbind(ds,left)
 
-dep_sampling_2021 <- dplyr::select(cbind(tidyr::separate(ds, col = left, into = c("drop00","drop01","pwsid","drop02","drop03"), sep=" "), 
-                               tidyr::separate(ds, col = right, into = c("drop04","date","pfas01","pfas02","pfas03","pfas04","pfas05","pfas06","pfas07","pfas08","pfas09","pfas10","pfas11","pfas12","pfas13","pfas14","pfas15","pfas16","pfas17","pfas18","pfas19","drop05"), sep=" ")),
+dep_sampling_2021_wide <- dplyr::select(cbind(tidyr::separate(ds, col = left, into = c("drop00","drop01","pwsid","drop02","drop03"), sep=" "), 
+                               tidyr::separate(ds, col = right, into = c("drop04","date","pfas01","pfas02","pfas03","pfas04","pfas05","pfas06","pfas07","pfas08","pfas09","pfas10","pfas11","pfas12","pfas13","pfas14","pfas15","pfas16","pfas17","pfas18","drop05","drop06"), sep=" ")),
                          -words, -loc, -left, -right, -starts_with("drop")
                     ) %>%
                       mutate_all(~ replace(., . == "ND", "0"))
 
-colnames(dep_sampling_2021) <- dep_colnames <- c("pwsid","collectiondate","x11cl_pf3ouds","x9cl_pf3ons","adona","hfpo_da","netfosaa","nmefosaa","pfda","pfdoa","pfta","pftrda","pfhxa","pfuna","pfbs","pfhpa","pfhxs","pfna","pfos","pfoa","sum_pfos_pfoa")
+colnames(dep_sampling_2021_wide) <- c("pwsid","collectiondate","x11cl_pf3ouds","x9cl_pf3ons","adona","hfpo_da","netfosaa","nmefosaa","pfda","pfdoa","pfta","pftrda","pfhxa","pfuna","pfbs","pfhpa","pfhxs","pfna","pfos","pfoa")
 
+dep_sampling_2021 <- dep_sampling_2021_wide %>% 
+  pivot_longer(
+    cols = c("x11cl_pf3ouds","x9cl_pf3ons","adona","hfpo_da","netfosaa","nmefosaa","pfbs","pfda","pfdoa","pfhpa","pfhxs","pfhxa","pfna","pfos","pfoa","pfta","pftrda","pfuna"),
+    names_to = "contaminant",
+    values_to = "analyticalresultvalue"
+  ) %>% 
+  mutate(
+    contaminant = case_when(
+      contaminant == "x11cl_pf3ouds" ~ "11cl-pf3ouds",
+      contaminant == "x9cl_pf3ons" ~ "9cl-pf3ons",
+      contaminant == "hfpo_da" ~ "hfpo-da",
+      TRUE ~ contaminant
+    )
+  )
 
 rm(ds,left,right,NH_names,pdf_text,pdf_url,names_ex,words_df)
 
 
-
-# CHECK FOR DUPLICATES BETWEEN 2020 AND 2021 PDFs
-# merge dep with ucmr to subset to the right counties
-
-
-dep_sampling_2019_2020_2021 <- rbind(
-                                cbind(
-                                  dep_sampling_2019, # adding blank columns to stack all three data sets
-                                  data.frame(x11cl_pf3ouds = "", x9cl_pf3ons = "", adona = "", hfpo_da = "", netfosaa = "", nmefosaa = "", pfda = "", pfdoa = "", pfta = "", pftrda = "", pfuna = "", pfhxa = "")
-                                ),
-                                dep_sampling_2020,
-                                dep_sampling_2021
-                                ) %>% 
-                              distinct()
+# combine dep sampling years
+dep_sampling_2019_2020_2021 <- rbind(dep_sampling_2019, dep_sampling_2020, dep_sampling_2021) %>% distinct()
 
 
-# save DEP long file
-
-# save(dep_sampling_2019_2021, file = "00_data/dep_sampling_2019_2021.Rdata")
-
-
-
-
-
-
-
-
-
+# save dep long file
+# save(dep_sampling_2019_2020_2021, file = "00_data/dep_sampling_2019_2020_2021")
 
 
 ## ucmr 3 data ----
 
+ucmr3 <- read_tsv("00_data/UCMR3_ALL_MA_WY.txt") %>% 
+  filter(State == "PA" & Contaminant %in% c("PFHpA", "PFHxS", "PFNA", "PFOA", "PFOS", "PFBS")) %>% 
+  dplyr::select(PWSID, CollectionDate, Contaminant, SampleID, SamplePointName, FacilityWaterType, MRL, AnalyticalResultsSign, AnalyticalResultValue) %>% 
+  mutate(
+    PWSID = substr(PWSID,3,10),
+    Contaminant = tolower(Contaminant)
+  )
 
-
-
-
+colnames(ucmr3) <- tolower(colnames(ucmr3))
 
 
 ## ucmr 5 data ----
@@ -485,7 +505,7 @@ dep_sampling_2019_2020_2021 <- rbind(
 
 ucmr5 <- read_tsv("00_data/UCMR5_ALL_MA_WY.txt") %>% 
           filter(State == "PA" & Contaminant != "lithium") %>% 
-          dplyr::select(PWSID, CollectionDate, Contaminant, SampleID, SamplePointName, FacilityWaterType, MRL, Units, AnalyticalResultsSign, AnalyticalResultValue) %>% 
+          dplyr::select(PWSID, CollectionDate, Contaminant, SampleID, SamplePointName, FacilityWaterType, MRL, AnalyticalResultsSign, AnalyticalResultValue) %>% 
           mutate(
             PWSID = substr(PWSID,3,10),
             Contaminant = tolower(Contaminant)
@@ -493,15 +513,37 @@ ucmr5 <- read_tsv("00_data/UCMR5_ALL_MA_WY.txt") %>%
 
 colnames(ucmr5) <- tolower(colnames(ucmr5))
 
-reduce_ucmr_to_study_pwsid <- pws.shp %>% 
+
+# merge all sampling data ----
+
+## dep
+reduce_to_study_pwsid <- pws.shp %>% 
                                 dplyr::select(PWS_ID) %>% 
                                 st_drop_geometry()
 
 colnames(reduce_ucmr_to_study_pwsid) <- tolower(colnames(reduce_ucmr_to_study_pwsid))
 
-ucmr5_long <- left_join(x=reduce_ucmr_to_study_pwsid, y=ucmr5, by = c("pws_id" = "pwsid")) %>% 
-                drop_na(collectiondate) %>% 
-                clean_names()
+dep <- left_join(x=reduce_ucmr_to_study_pwsid, y=dep_sampling_2019_2020_2021, by = c("pws_id" = "pwsid")) %>% 
+  drop_na(collectiondate) %>% 
+  clean_names()
+
+# data is in wide format. need to transform to long.
+
+
+
+
+## ucmr
+ucmr <- left_join(x=reduce_ucmr_to_study_pwsid, y=rbind(ucmr3,ucmr5), by = c("pws_id" = "pwsid")) %>% 
+  drop_na(collectiondate) %>% 
+  clean_names()
+  
+## all pa pfas sampling
+pa_pfas_sampling <- rbind(dep,ucmr)
+
+
+
+
+
 
 ## calculating aggregate variables and wide ds ----
 
