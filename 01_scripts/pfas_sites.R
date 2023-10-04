@@ -476,13 +476,11 @@ dep_sampling_2021 <- dep_sampling_2021_wide %>%
 
 rm(ds,left,right,NH_names,pdf_text,pdf_url,names_ex,words_df)
 
-
 # combine dep sampling years
 dep_sampling_2019_2020_2021 <- rbind(dep_sampling_2019, dep_sampling_2020, dep_sampling_2021) %>% distinct()
 
-
 # save dep long file
-# save(dep_sampling_2019_2020_2021, file = "00_data/dep_sampling_2019_2020_2021")
+# save(dep_sampling_2019_2020_2021, file = "00_data/dep_sampling_2019_2020_2021.Rdata")
 
 
 ## ucmr 3 data ----
@@ -525,24 +523,25 @@ colnames(reduce_ucmr_to_study_pwsid) <- tolower(colnames(reduce_ucmr_to_study_pw
 
 dep <- left_join(x=reduce_ucmr_to_study_pwsid, y=dep_sampling_2019_2020_2021, by = c("pws_id" = "pwsid")) %>% 
   drop_na(collectiondate) %>% 
-  clean_names()
-
-# data is in wide format. need to transform to long.
-
-
-
+  mutate(data_source = "DEP")
 
 ## ucmr
 ucmr <- left_join(x=reduce_ucmr_to_study_pwsid, y=rbind(ucmr3,ucmr5), by = c("pws_id" = "pwsid")) %>% 
   drop_na(collectiondate) %>% 
+  mutate(data_source = "UCMR") %>% 
   clean_names()
   
 ## all pa pfas sampling
-pa_pfas_sampling <- rbind(dep,ucmr)
+pa_pfas_sampling <- rbind(
+                      cbind(
+                        dep,
+                        data.frame(sampleid = NA, samplepointname = NA, facilitywatertype = NA, mrl = NA, analyticalresultssign = NA)
+                      ),
+                      ucmr
+                      )
 
-
-
-
+# save long file
+# save(pa_pfas_sampling, file = "00_data/pa_pfas_sampling.Rdata")
 
 
 ## calculating aggregate variables and wide ds ----
