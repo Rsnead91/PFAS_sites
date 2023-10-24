@@ -4,7 +4,7 @@
 
 if (!require("pacman")) install.packages("pacman")
 
-pacman::p_load('tidycensus','tidyverse','ggspatial','arcpullr','tigris','raster','pdftools','readxl','units','sf','ggmap','reshape2','janitor','ggpattern','tidygeocoder')
+pacman::p_load('tidycensus','tidyverse','ggspatial','arcpullr','tigris','raster','pdftools','readxl','units','sf','ggmap','reshape2','janitor','ggpattern','tidygeocoder','lubridate')
 
 # 2. load data ----
 
@@ -63,12 +63,36 @@ non_superfund <- st_as_sf(
 
 ## 2.4 Neshaminy Creek Watershed ----
 
-neshaminy_creek <- get_spatial_layer("https://mapservices.pasda.psu.edu/server/rest/services/pasda/BucksCounty/MapServer/10", sf_type = "esriGeometryPolygon") %>% # downloading data directly from pasda website
+#data pulled from here: https://prd-tnm.s3.amazonaws.com/index.html?prefix=StagedProducts/Hydrography/WBD/National/GDB/
+
+#importing watershed geodatabase
+
+# Define the path to the geodatabase (.gdb) file
+gdb_path <- "/Users/rsnead91/Documents/Personal/Work/Jobs/PFAS + Cancer/PFAS_sites/00_data/WBD_National_GDB.gdb"
+
+# List available layers in the geodatabase
+layers <- st_layers(gdb_path)
+
+# Read the selected layer
+data <- st_read(dsn = gdb_path, layer = layers[["name"]][1]) #WBDHU12
+
+#reducing data to only neshaminy creek watershed and projecting
+neshaminy <- data %>%
+  mutate(name = toupper(name)) %>%         
+  filter(str_detect(name, "NESHAMINY")) %>% 
+  dplyr::select(states, name) %>% 
   st_set_crs(st_crs(4269)) %>% # set coordinate system to match other geo files
-  st_transform(crs = 4269) %>% # set projection to match other geo files
-  dplyr::filter(NAME == "NESHAMINY CREEK") # only keeping area of watershed
+  st_transform(crs = 4269) # set projection to match other geo files
+
+rm(data)
+
+#joining smaller sub-watersheds
+neshaminy_union <- neshaminy %>%  
+  group_by(states) %>% 
+  summarise()
 
 neshaminy_creek2 <- data.frame(
+                      name = "Neshaminy Creek Watershed",
                       county = "BUCKS + MONTGOMERY",
                       site = "State Advisory",
                       type = "Watershed",
@@ -78,16 +102,15 @@ neshaminy_creek2 <- data.frame(
                       active = "Yes"
                     )
 
-neshaminy_creek <- cbind(neshaminy_creek,neshaminy_creek2) %>%
-                    dplyr::select(NAME,county,site,type,groundwater,surface_water,electronic_manufacturing,active) %>%
-                    rename(name = NAME)
+neshaminy_creek <- cbind(neshaminy_union,neshaminy_creek2) %>%
+                    dplyr::select(name,county,site,type,groundwater,surface_water,electronic_manufacturing,active)
 
 ## 2.5 Ridge Run - East and West Rockhill Townships, Bucks County ----
 
 ridge_run <- get_spatial_layer("https://mapservices.pasda.psu.edu/server/rest/services/pasda/PennDOT/MapServer/10", sf_type = "esriGeometryPolygon") %>% # downloading data directly from pasda website
   st_set_crs(st_crs(4269)) %>% # set coordinate system to match other geo files
   st_transform(crs = 4269) %>% # set projection to match other geo files
-  dplyr::filter(FIPS_COUNT == "017" & MUNICIPAL1 %in% c("EAST ROCKHILL","WEST ROCKHILL")) # only keeping estimated area of landfill
+  dplyr::filter(FIPS_COUNT == "017" & MUNICIPAL1 %in% c("EAST ROCKHILL","WEST ROCKHILL","PERKASIE")) # only keeping estimated area of landfill
 
 ## repairing simple geometry issues in municipality and pws shapefiles
 ridge_run <- st_make_valid(ridge_run)
@@ -137,7 +160,7 @@ facilities_discharge_pfas <- cbind(facilities_discharge_pfas,facilities_discharg
 
 
 
-## electronics manufacturing in pa registered with federal govt
+## electronics manufacturing in pa registered with federal govt NAICS: 334000 ----
 
 electric <- read_csv("00_data/EntityPAElectronicsManufacturing.csv") %>% 
               clean_names() %>% 
@@ -167,6 +190,34 @@ electric_geo1 <- st_as_sf(
 electric_geo_study <- st_intersection(study_counties, electric_geo1)
 
 
+## plastics manufacturing in pa registered with federal govt NAICS: 326100 ----
+
+plastics <- read_csv("00_data/EntityPAPlasticsManufacturing.csv") %>% 
+  clean_names() %>% 
+  mutate(address = str_c(address_line_1,", ",city,", ",state_province," ",zip_code)) %>% 
+  tidygeocoder::geocode(address = address, method = 'osm', lat = latitude , long = longitude)
+
+plastics_na <- plastics %>% 
+  filter(is.na(latitude)) %>% 
+  dplyr::select(-c(latitude,longitude))
+
+plastics_na_retry <- plastics_na %>% 
+  tidygeocoder::geocode(street = address_line_1, city = city, state = state_province, postalcode = zip_code, method = 'census', lat = latitude , long = longitude)
+
+plastics_nona <- rbind(
+  plastics %>% 
+    filter(!is.na(latitude)),
+  plastics_na_retry %>% 
+    filter(!is.na(latitude))
+)
+
+plastics_geo1 <- st_as_sf(
+  plastics_nona,
+  coords = c("longitude","latitude")
+) %>% 
+  st_set_crs(st_crs(4269))
+
+plastics_geo_study <- st_intersection(study_counties, plastics_geo1)
 
 
 
@@ -177,6 +228,8 @@ pws.shp <- get_spatial_layer("https://mapservices.pasda.psu.edu/server/rest/serv
   st_set_crs(st_crs(4269)) %>% # set coordinate system to match other geo files
   st_transform(crs = 4269) %>% # set projection to match other geo files
   dplyr::filter(CNTY_NAME %in% c("Berks", "Bucks", "Carbon", "Chester", "Delaware", "Lancaster", "Lebanon", "Lehigh", "Monroe", "Montgomery", "Northampton", "Schuylkill")) # only keeping 12 study area counties
+
+#nrow(pws.shp): 581
 
 ## repairing simple geometry issues in pws shapefiles
 pws.shp <- st_make_valid(pws.shp)
@@ -525,8 +578,6 @@ dep <- left_join(x=reduce_ucmr_to_study_pwsid, y=dep_sampling_2019_2020_2021, by
   drop_na(collectiondate) %>% 
   mutate(data_source = "DEP")
 
-
-
 ## ucmr
 ucmr <- left_join(x=reduce_ucmr_to_study_pwsid, y=rbind(ucmr3,ucmr5), by = c("pws_id" = "pwsid")) %>% 
   drop_na(collectiondate) %>% 
@@ -541,8 +592,6 @@ pa_pfas_sampling <- rbind(
                       ),
                       ucmr
                       )
-
-library(lubridate)
 
 pa_pfas_sampling$collectiondate <- mdy(pa_pfas_sampling$collectiondate)
 
@@ -559,23 +608,13 @@ pa_pfas_sampling$collectiondate <- mdy(pa_pfas_sampling$collectiondate)
 ##### sample site
 
 
-pa_pfas_sampling_ucmr3dep <- rbind(
-  cbind(
-    dep,
-    data.frame(sampleid = NA, samplepointname = NA, facilitywatertype = NA, mrl = NA, analyticalresultssign = NA)
-  ),
-  ucmr
-)
-
-unique(pa_pfas_sampling_ucmr3dep$pws_id)
-
-# +12 pws
-
-summary(pa_pfas_sampling_wide[,c("num_samples","num_sample_locations","num_dates","num_contaminants_tested")])
-
-
-
-
+# pa_pfas_sampling_ucmr3dep <- rbind(
+#   cbind(
+#     dep,
+#     data.frame(sampleid = NA, samplepointname = NA, facilitywatertype = NA, mrl = NA, analyticalresultssign = NA)
+#   ),
+#   ucmr
+# )
 
 # add number for collection date
 pa_pfas_sampling <- left_join(
@@ -619,38 +658,38 @@ pa_pfas_sampling_wide <- left_join(
                         )
 
 # number of samples by date
-pa_pfas_sampling_wide <- left_join(
-                            pa_pfas_sampling_wide,
-                            pa_pfas_sampling %>% 
-                            filter(date == 1) %>% 
-                            group_by(pws_id) %>%
-                            mutate(num_samples_date1 = n()) %>% 
-                            distinct(pws_id, num_samples_date1)
-                          ,
-                          by = "pws_id"
-                      )
-
-pa_pfas_sampling_wide <- left_join(
-                            pa_pfas_sampling_wide,
-                            pa_pfas_sampling %>% 
-                            filter(date == 2) %>% 
-                            group_by(pws_id) %>%
-                            mutate(num_samples_date2 = n()) %>% 
-                            distinct(pws_id, num_samples_date2)
-                          ,
-                          by = "pws_id"
-                    )
-
-pa_pfas_sampling_wide <- left_join(
-                            pa_pfas_sampling_wide,
-                            pa_pfas_sampling %>% 
-                            filter(date == 3) %>% 
-                            group_by(pws_id) %>%
-                            mutate(num_samples_date3 = n()) %>% 
-                            distinct(pws_id, num_samples_date3)
-                          ,
-                          by = "pws_id"
-                      )
+# pa_pfas_sampling_wide <- left_join(
+#                             pa_pfas_sampling_wide,
+#                             pa_pfas_sampling %>% 
+#                             filter(date == 1) %>% 
+#                             group_by(pws_id) %>%
+#                             mutate(num_samples_date1 = n()) %>% 
+#                             distinct(pws_id, num_samples_date1)
+#                           ,
+#                           by = "pws_id"
+#                       )
+# 
+# pa_pfas_sampling_wide <- left_join(
+#                             pa_pfas_sampling_wide,
+#                             pa_pfas_sampling %>% 
+#                             filter(date == 2) %>% 
+#                             group_by(pws_id) %>%
+#                             mutate(num_samples_date2 = n()) %>% 
+#                             distinct(pws_id, num_samples_date2)
+#                           ,
+#                           by = "pws_id"
+#                     )
+# 
+# pa_pfas_sampling_wide <- left_join(
+#                             pa_pfas_sampling_wide,
+#                             pa_pfas_sampling %>% 
+#                             filter(date == 3) %>% 
+#                             group_by(pws_id) %>%
+#                             mutate(num_samples_date3 = n()) %>% 
+#                             distinct(pws_id, num_samples_date3)
+#                           ,
+#                           by = "pws_id"
+#                       )
 
 
 
@@ -668,21 +707,21 @@ pa_pfas_sampling_wide <- left_join(
 # 2 1 1 1 blue
 
 
-view(
-  ucmr5_long %>% 
-    group_by(pws_id, contaminant, collectiondate) %>% 
-    dplyr::select(pws_id, contaminant, collectiondate, sampleid, samplepointname, date)
-)
-
-
-group - pws_id, contaminant
-view(arrange(ucmr5_long, pws_id, contaminant, collectiondate, sampleid))
-
-
-
-test <- ucmr5_long %>%
-          group_by(pws_id, contaminant) %>%
-          summarize(matches = n_distinct(unlist(strsplit(paste(samplepointname, collapse = " "), " "))))
+# view(
+#   ucmr5_long %>% 
+#     group_by(pws_id, contaminant, collectiondate) %>% 
+#     dplyr::select(pws_id, contaminant, collectiondate, sampleid, samplepointname, date)
+# )
+# 
+# 
+# group - pws_id, contaminant
+# view(arrange(ucmr5_long, pws_id, contaminant, collectiondate, sampleid))
+# 
+# 
+# 
+# test <- ucmr5_long %>%
+#           group_by(pws_id, contaminant) %>%
+#           summarize(matches = n_distinct(unlist(strsplit(paste(samplepointname, collapse = " "), " "))))
 
 
 
@@ -845,38 +884,38 @@ pa_pfas_sampling_wide <- left_join(
 
 # sum of pfas chemicals above mrl performed by collection date 
 # to not add values from the same chemical more than once
-pa_pfas_sampling_wide <- left_join(
-                            pa_pfas_sampling_wide,
-                            pa_pfas_sampling %>% 
-                            filter(analyticalresultssign == "=" & date == 1) %>% 
-                            distinct(pws_id, contaminant, sampleid, analyticalresultvalue) %>% 
-                            group_by(pws_id) %>% 
-                            summarise(pfas_sum_values_above_mrl_1 = sum(analyticalresultvalue))
-                          ,
-                          by = "pws_id"
-      )
-
-pa_pfas_sampling_wide <- left_join(
-                            pa_pfas_sampling_wide,
-                            pa_pfas_sampling %>% 
-                            filter(analyticalresultssign == "=" & date == 2) %>% 
-                            distinct(pws_id, contaminant, sampleid, analyticalresultvalue) %>% 
-                            group_by(pws_id) %>% 
-                            summarise(pfas_sum_values_above_mrl_2 = sum(analyticalresultvalue))
-                          ,
-                          by = "pws_id"
-                        )
-
-pa_pfas_sampling_wide <- left_join(
-                            pa_pfas_sampling_wide,
-                            pa_pfas_sampling %>% 
-                            filter(analyticalresultssign == "=" & date == 3) %>% 
-                            distinct(pws_id, contaminant, sampleid, analyticalresultvalue) %>% 
-                            group_by(pws_id) %>% 
-                            summarise(pfas_sum_values_above_mrl_3 = sum(analyticalresultvalue))
-                          ,
-                          by = "pws_id"
-                        )
+# pa_pfas_sampling_wide <- left_join(
+#                             pa_pfas_sampling_wide,
+#                             pa_pfas_sampling %>% 
+#                             filter(analyticalresultssign == "=" & date == 1) %>% 
+#                             distinct(pws_id, contaminant, sampleid, analyticalresultvalue) %>% 
+#                             group_by(pws_id) %>% 
+#                             summarise(pfas_sum_values_above_mrl_1 = sum(analyticalresultvalue))
+#                           ,
+#                           by = "pws_id"
+#       )
+# 
+# pa_pfas_sampling_wide <- left_join(
+#                             pa_pfas_sampling_wide,
+#                             pa_pfas_sampling %>% 
+#                             filter(analyticalresultssign == "=" & date == 2) %>% 
+#                             distinct(pws_id, contaminant, sampleid, analyticalresultvalue) %>% 
+#                             group_by(pws_id) %>% 
+#                             summarise(pfas_sum_values_above_mrl_2 = sum(analyticalresultvalue))
+#                           ,
+#                           by = "pws_id"
+#                         )
+# 
+# pa_pfas_sampling_wide <- left_join(
+#                             pa_pfas_sampling_wide,
+#                             pa_pfas_sampling %>% 
+#                             filter(analyticalresultssign == "=" & date == 3) %>% 
+#                             distinct(pws_id, contaminant, sampleid, analyticalresultvalue) %>% 
+#                             group_by(pws_id) %>% 
+#                             summarise(pfas_sum_values_above_mrl_3 = sum(analyticalresultvalue))
+#                           ,
+#                           by = "pws_id"
+#                         )
 
 pa_pfas_sampling_wide <- pa_pfas_sampling_wide %>% 
                             mutate(
@@ -896,34 +935,39 @@ num_samples_by_chem <- left_join(
                         by = c("pws_id","contaminant")
 )
 
-pa_pfas_sampling <- left_join(
-                      pa_pfas_sampling_wide,
-                      left_join(
-                        num_samples_by_chem %>%
-                          pivot_wider(
-                            id_cols = c(pws_id),
-                            names_from = contaminant,
-                            names_glue = "{contaminant}_num_samples",
-                            values_from = num_samples_by_chem
-                          ) %>% 
-                          clean_names()
-                        ,
-                        num_samples_by_chem %>%
-                          pivot_wider(
-                            id_cols = c(pws_id),
-                            names_from = contaminant,
-                            names_glue = "{contaminant}_num_samples_above_mrl",
-                            values_from = num_samples_by_chem_above_mrl
-                          ) %>% 
-                          clean_names()
+pa_pfas_sampling_wide <- left_join(
+                          pa_pfas_sampling_wide,
+                          left_join(
+                            num_samples_by_chem %>%
+                              pivot_wider(
+                                id_cols = c(pws_id),
+                                names_from = contaminant,
+                                names_glue = "{contaminant}_num_samples",
+                                values_from = num_samples_by_chem
+                              ) %>% 
+                              clean_names()
+                            ,
+                            num_samples_by_chem %>%
+                              pivot_wider(
+                                id_cols = c(pws_id),
+                                names_from = contaminant,
+                                names_glue = "{contaminant}_num_samples_above_mrl",
+                                values_from = num_samples_by_chem_above_mrl
+                              ) %>% 
+                              clean_names()
+                              ,
+                              by = "pws_id"
+                          )
                           ,
                           by = "pws_id"
-                      )
-                      ,
-                      by = "pws_id"
-      )
+          )  %>% 
+          rename(
+            x4_2fts_num_samples = x4_2_fts_num_samples,
+            x6_2fts_num_samples = x6_2_fts_num_samples,
+            x8_2fts_num_samples = x8_2_fts_num_samples
+          )
 
-pa_pfas_sampling[is.na(pa_pfas_sampling)] <- 0
+pa_pfas_sampling_wide[is.na(pa_pfas_sampling_wide)] <- 0
 
 #UCMR values and MRL are in micrograms/liter while PA DEP is in nanograms/liter
 #converting DEP values to match UCMR units
@@ -984,16 +1028,42 @@ pa_pfas_sampling <- pa_pfas_sampling %>%
                         ),
                         pfas_detected = case_when(
                           (data_source == "DEP" & (analyticalresultvalue == 0)) ~ "Not detected",
-                          (data_source == "UCMR" & (analyticalresultssign == "<")) ~ "Detected between 0 and MRL",
+                          (data_source == "UCMR" & (analyticalresultssign == "<")) ~ "Detected at 0 or less than MRL",
                           (data_source == "DEP" & ((analyticalresultvalue > 0) & (analyticalresultvalue < mrl))) ~ "Detected above 0 but below MRL",
                           (data_source == "UCMR" & (analyticalresultssign == "=")) | (data_source == "DEP" & (analyticalresultvalue > mrl)) ~ "Detected at or above MRL"
                         )
                       )
 
-view(
-  pa_pfas_sampling[,
-    c("data_source","contaminant","analyticalresultssign","analyticalresultvalue","mrl","pfas_detected","pfas_detected_source")]
+pa_pfas_sampling_wide <- left_join(
+                          pa_pfas_sampling_wide,
+                          pa_pfas_sampling %>% 
+                            group_by(pws_id) %>% 
+                            mutate(pfas_detected_above_mrl = as.integer("Detected at or above MRL" %in% pfas_detected),
+                                   pfas_detected_above_0 = as.integer("Detected above 0 but below MRL" %in% pfas_detected),
+                                   pfas_detected_below_mrl = as.integer("Detected at 0 or less than MRL" %in% pfas_detected),
+                                   pfas_not_detected = as.integer("Not detected" %in% pfas_detected),
+                                   pfas_detected_4cat = 
+                                                         ifelse(
+                                                           pfas_detected_above_mrl == 1,
+                                                           "PFAS detected at or above MRL",
+                                                           ifelse(
+                                                             pfas_detected_above_0 == 1,
+                                                             "PFAS detected above 0 but below MRL",
+                                                             ifelse(
+                                                               pfas_detected_below_mrl == 1,
+                                                               "PFAS detected at 0 or less than MRL",
+                                                               "PFAS not detected"
+                                                             )
+                                                           )
+                                                       )
+                                   ) %>% 
+                              distinct(pws_id, pfas_detected_4cat),
+                          by = "pws_id"
 )
+
+table(pa_pfas_sampling_wide$pfas_detected_4cat)
+
+
 
 
 
@@ -1125,7 +1195,9 @@ x8_2fts
 x9cl_pf3ons
 adona
 hfpo_da
+netfosaa
 nfdha
+nmefosaa
 pfba
 pfbs
 pfda
@@ -1142,7 +1214,10 @@ pfoa
 pfos
 pfpea
 pfpes
+pfta
+pftrda
 pfuna
+  
 
 ds <- ucmr5_long[ucmr5_long$pws_id == "1090063",]
 
@@ -1242,7 +1317,118 @@ ucmr5_long %>%
 
 
 
+
+# descriptives ----
+
+
+unique(pa_pfas_sampling_ucmr3dep$pws_id)
+
+# +12 pws
+
+pfas_sum <- pa_pfas_sampling_wide[,c("num_samples",
+                                     "num_sample_locations",
+                                     "num_dates",
+                                     "num_gw",
+                                     "num_contaminants_tested",
+                                     "any_contaminants_above_mrl",
+                                     "num_contaminants_above_mrl")]
+
+pfas_sum_ds <- as.data.frame(
+                t(
+                  do.call(cbind, lapply(pfas_sum, summary))
+                )
+)
+
+pfas_sum_ds <-rownames_to_column(pfas_sum_ds, "variable")
+
+write_csv(pfas_sum_ds, file = "00_data/pfas_sum_ds.csv")
+
+
+prop.table(table(pa_pfas_sampling_wide$pfas_detected_4cat))
+
+
+
+sum(ifelse(pa_pfas_sampling_wide$x11cl_pf3ouds_num_samples>0,1,0))
+sum(ifelse(pa_pfas_sampling_wide$x11cl_pf3ouds_above_mrl>0,1,0))
+
+contaminants <- c("x11cl_pf3ouds","x4_2fts","x6_2fts","x8_2fts","x9cl_pf3ons","adona","hfpo_da","netfosaa","nfdha","nmefosaa","pfba","pfbs","pfda","pfdoa","pfeesa","pfhpa","pfhps","pfhxa","pfhxs","pfmba","pfmpa","pfna","pfoa","pfos","pfpea","pfpes","pfta","pftrda","pfuna")
+
+contam_descrip <- data.frame()
+
+for (i in 1:length(contaminants)) {
+  temp_df <- cbind(contaminants[i],sum(ifelse(pa_pfas_sampling_wide[,paste0(contaminants[i],"_num_samples")]>0,1,0)),sum(ifelse(pa_pfas_sampling_wide[,paste0(contaminants[i],"_above_mrl")]>0,1,0)))
+  contam_descrip <- rbind(contam_descrip,temp_df)
+}
+
+colnames(contam_descrip) <- c("contaminant","num_pws_sampledchem","num_pws_chem_above_mrl")
+
+write_csv(contam_descrip, file = "00_data/contam_descrip.csv")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 # maps ----
+
+# attaching geometry to wide file
+
+pfas_pws_wide <- merge(x = pa_pfas_sampling_wide, y = pws.shp, by.x = "pws_id", by.y = "PWS_ID", keep.x = TRUE)
+
+
+## pws with and without sampling data ----
+
+ggplot() +
+  geom_sf(data = study_counties, fill = "grey97", color = "black", linewidth = 0.6) +
+  geom_sf(data = pws.shp, aes(fill = "nottested", color = "nottested")) +
+  geom_sf(data = pfas_pws_wide, aes(geometry = geoms, fill = "tested", color = "tested")) +
+  labs(caption = "Public water supply areas tested (134/581) for PFAS from 2013 to 2023") +
+  scale_fill_manual(values = c("nottested" = "grey70","tested" = "royalblue3"), labels = c("Not Tested","Tested")) +
+  scale_color_manual(values = c("nottested" = "grey70","tested" = "royalblue3")) +
+  guides(
+    fill = guide_legend(title = "PFAS Sampling"),
+    color = "none"
+  ) +
+  theme(
+    plot.background = element_rect(color = "black", linewidth = 3),
+    plot.caption.position = "panel",
+    plot.caption = element_text(size = 12, hjust = 0, vjust = 3),
+    panel.background = element_rect(fill = "white"),
+    title = element_text(family = "Arial", size = 14),  # Set font size here
+    axis.title.x = element_blank(),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    legend.text = element_text(size = 10),
+    legend.title = element_text(size = 12),
+    legend.key = element_rect(colour = NA, fill = NA)
+  ) +
+  ggspatial::annotation_north_arrow(
+    location = "br", which_north = "true",
+    pad_x = unit(0.1, "in"), pad_y = unit(0.1, "in"),
+    height = unit(0.6, "in"), width = unit(0.6, "in"),
+    style = ggspatial::north_arrow_fancy_orienteering(
+      fill = c("black", "white"),
+      line_col = "black"
+    ))
+
+ggsave("02_output/pws_w_samplingdata.png", height = 6, width = 7.2, units = "in")
+
+
+
+
+
 
 ## pfas detected sites ----
 
@@ -1464,19 +1650,216 @@ ggsave("02_output/PFAS_sites_pws_pfas_over_mrl.png", height = 7, width = 8, unit
 
 
 
+## pws pfas detected 4cat ----
+
+ggplot() +
+  geom_sf(data = study_counties, fill = "grey97", color = "black", linewidth = 0.6) +
+  geom_sf(data = pfas_pws_wide, aes(geometry = geoms, fill = pfas_detected_4cat, color = pfas_detected_4cat)) +
+  labs(caption = "PFAS public water supply area sampling results from 2013 to 2023") +
+  scale_fill_manual(
+    values = c("PFAS detected at or above MRL" = "firebrick2",
+               "PFAS detected above 0 but below MRL" = "orange",
+               "PFAS detected at 0 or less than MRL" = "yellow",
+               "PFAS not detected" = "forestgreen"
+               ),
+    breaks = c("PFAS detected at or above MRL","PFAS detected above 0 but below MRL","PFAS detected at 0 or less than MRL","PFAS not detected"),    
+    labels = c("PFAS detected at or above MRL","PFAS detected above 0 but below MRL","PFAS detected at 0 or less than MRL","PFAS not detected")
+  ) +
+  scale_color_manual(
+    values = c("PFAS detected at or above MRL" = "firebrick2",
+               "PFAS detected above 0 but below MRL" = "orange",
+               "PFAS detected at 0 or less than MRL" = "yellow",
+               "PFAS not detected" = "forestgreen"
+    )
+  ) +
+  guides(
+    fill = guide_legend(title = "PFAS Detection"),
+    color = "none"
+  ) +
+  theme(
+    plot.background = element_rect(color = "black", linewidth = 3),
+    plot.caption.position = "panel",
+    plot.caption = element_text(size = 12, hjust = 0, vjust = 3),
+    panel.background = element_rect(fill = "white"),
+    title = element_text(family = "Arial", size = 14),  # Set font size here
+    axis.title.x = element_blank(),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    legend.text = element_text(size = 10),
+    legend.title = element_text(size = 12),
+    legend.key = element_rect(colour = NA, fill = NA)
+  ) +
+  ggspatial::annotation_north_arrow(
+    location = "br", which_north = "true",
+    pad_x = unit(0.1, "in"), pad_y = unit(0.1, "in"),
+    height = unit(0.6, "in"), width = unit(0.6, "in"),
+    style = ggspatial::north_arrow_fancy_orienteering(
+      fill = c("black", "white"),
+      line_col = "black"
+    )) 
+
+ggsave("02_output/PFAS_detected_pws.png", height = 4, width = 6.79, units = "in")
 
 
 
 
 
+## pws pfas detected 4cat w PFAS detected sites ----
+
+ggplot() +
+  geom_sf(data = study_counties, fill = "grey97", color = "black", linewidth = 0.6) +
+  geom_sf(data = pfas_pws_wide, aes(geometry = geoms, fill = pfas_detected_4cat, color = pfas_detected_4cat)) +
+  labs(caption = "PFAS public water supply area sampling results from 2013 to 2023") +
+  scale_fill_manual(
+    values = c("PFAS detected at or above MRL" = "firebrick2",
+               "PFAS detected above 0 but below MRL" = "orange",
+               "PFAS detected at 0 or less than MRL" = "yellow",
+               "PFAS not detected" = "forestgreen"
+    ),
+    breaks = c("PFAS detected at or above MRL","PFAS detected above 0 but below MRL","PFAS detected at 0 or less than MRL","PFAS not detected"),    
+    labels = c("PFAS detected at or above MRL","PFAS detected above 0 but below MRL","PFAS detected at 0 or less than MRL","PFAS not detected")
+  ) +
+  scale_color_manual(
+    values = c("PFAS detected at or above MRL" = "firebrick2",
+               "PFAS detected above 0 but below MRL" = "orange",
+               "PFAS detected at 0 or less than MRL" = "yellow",
+               "PFAS not detected" = "forestgreen"
+    )
+  ) +
+  guides(
+    fill = guide_legend(title = "PFAS Detection"),
+    color = "none"
+  ) +
+  theme(
+    plot.background = element_rect(color = "black", linewidth = 3),
+    plot.caption.position = "panel",
+    plot.caption = element_text(size = 12, hjust = 0, vjust = 3),
+    panel.background = element_rect(fill = "white"),
+    title = element_text(family = "Arial", size = 14),  # Set font size here
+    axis.title.x = element_blank(),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    legend.text = element_text(size = 10),
+    legend.title = element_text(size = 12),
+    legend.key = element_rect(colour = NA, fill = NA)
+  ) +
+  ggspatial::annotation_north_arrow(
+    location = "br", which_north = "true",
+    pad_x = unit(0.1, "in"), pad_y = unit(0.1, "in"),
+    height = unit(0.6, "in"), width = unit(0.6, "in"),
+    style = ggspatial::north_arrow_fancy_orienteering(
+      fill = c("black", "white"),
+      line_col = "black"
+    )) 
+
+ggsave("02_output/PFAS_detected_pws.png", height = 4, width = 6.79, units = "in")
 
 
 
 
+## pws x number of samples ----
 
-# map electronic manufacturing facilities
+pfas_pws_wide$num_samples.q <- cut(pfas_pws_wide$num_samples, quantile(pfas_pws_wide$num_samples, probs = c(0,.25,.5,.75,1)), label = FALSE, include.lowest = TRUE)
 
-## pfas detected sites ----
+cols.blues <- c("#eff3ff","#bdd7e7","#6baed6","#08519c")
+
+ggplot() +
+  geom_sf(data = study_counties, fill = "grey97", color = "black", linewidth = 0.6) +
+  geom_sf(data = pfas_pws_wide, aes(geometry = geoms, fill = as.factor(num_samples.q), color = as.factor(num_samples.q))) +
+  scale_fill_manual(values=cols.blues, labels = c('[0-25%: 12-18]','[25-50%: 18-24]', '[50-75%: 24-75]', '[75-100%: 75-435]'), limits= c("1","2","3","4"), na.value="grey", drop=FALSE) +
+  scale_color_manual(values=cols.blues, limits= c("1","2","3","4"), na.value="grey", drop=FALSE) +
+  labs(caption = "Quartiles of the number of PFAS samples in public water supply ares from 2013 to 2023") +
+  guides(
+    fill = guide_legend(title = "Number of Samples"),
+    color = "none"
+  ) +
+  theme(
+    plot.background = element_rect(color = "black", linewidth = 3),
+    plot.caption.position = "panel",
+    plot.caption = element_text(size = 12, hjust = 0, vjust = 3),
+    panel.background = element_rect(fill = "white"),
+    title = element_text(family = "Arial", size = 14),  # Set font size here
+    axis.title.x = element_blank(),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    legend.text = element_text(size = 10),
+    legend.title = element_text(size = 12),
+    legend.key = element_rect(colour = NA, fill = NA)
+  ) +
+  ggspatial::annotation_north_arrow(
+    location = "br", which_north = "true",
+    pad_x = unit(0.1, "in"), pad_y = unit(0.1, "in"),
+    height = unit(0.6, "in"), width = unit(0.6, "in"),
+    style = ggspatial::north_arrow_fancy_orienteering(
+      fill = c("black", "white"),
+      line_col = "black"
+    )) 
+
+ggsave("02_output/pws_num_samples.png", height = 5.15, width = 6.68, units = "in")
+
+
+
+
+## pws x number of detected contaminants ----
+
+pfas_pws_wide$num_contaminants_above_mrl.q <- cut(pfas_pws_wide$num_contaminants_above_mrl, c(0,1,2,3,+Inf), label = FALSE) #, include.lowest = TRUE)
+
+view(pfas_pws_wide[,c("num_contaminants_above_mrl","num_contaminants_above_mrl.q")])
+
+cols.reds <- c("#feedde","#fdbe85","#fd8d3c","#a63603")
+
+ggplot() +
+  geom_sf(data = study_counties, fill = "grey97", color = "black", linewidth = 0.6) +
+  geom_sf(data = pfas_pws_wide, aes(geometry = geoms, fill = as.factor(num_contaminants_above_mrl.q), color = as.factor(num_contaminants_above_mrl.q))) +
+  scale_fill_manual(values=cols.reds, labels = c('1','2', '3', '4+'), limits= c("1","2","3","4"), na.value="grey90", drop=FALSE) +
+  scale_color_manual(values=cols.reds, limits= c("1","2","3","4"), na.value="grey90", drop=FALSE) +
+  labs(caption = "Quartiles of the number of PFAS contaminats above the MRL in public water supply areas\nfrom 2013 to 2023") +
+  guides(
+    fill = guide_legend(title = "Number of PFAS\ncontaminants above MRL"),
+    color = "none"
+  ) +
+  theme(
+    plot.background = element_rect(color = "black", linewidth = 3),
+    plot.caption.position = "panel",
+    plot.caption = element_text(size = 12, hjust = 0, vjust = 3),
+    panel.background = element_rect(fill = "white"),
+    title = element_text(family = "Arial", size = 14),  # Set font size here
+    axis.title.x = element_blank(),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    legend.text = element_text(size = 10),
+    legend.title = element_text(size = 12),
+    legend.key = element_rect(colour = NA, fill = NA)
+  ) +
+  ggspatial::annotation_north_arrow(
+    location = "br", which_north = "true",
+    pad_x = unit(0.1, "in"), pad_y = unit(0.1, "in"),
+    height = unit(0.6, "in"), width = unit(0.6, "in"),
+    style = ggspatial::north_arrow_fancy_orienteering(
+      fill = c("black", "white"),
+      line_col = "black"
+    )) 
+
+ggsave("02_output/pws_num_contaminants.png", height = 5.1, width = 6.85, units = "in")
+
+
+
+
+# map electronic manufacturing facilities ----
+
+## pfas detected sites
 
 ggplot() +
   geom_sf(data = study_counties, fill = "grey97", color = "black", linewidth = 0.6) +
@@ -1493,7 +1876,7 @@ ggplot() +
   geom_sf(data = filter(superfund_merge, type %in% c("Manufacturing", "Manufacturing/Military") & site == "Non-Superfund"), aes(color = "Non-Superfund", shape = "Manufacturing"), size = 2.5) +
   geom_sf(data = filter(superfund_merge, type == "Military" & site == "State Advisory"), aes(color = "Non-Superfund", shape = "Military"), size = 2.5) +
   geom_sf(data = ridge_run, aes(color = "Non-Superfund", shape = "Tire fire extinguished by FF Foam"), size = 5) +
-  labs(caption = "PFAS Detected Sites by Site Type and Government Recognition") +
+  labs(caption = "PFAS Detected Sites by Site Type and Government Recognition + Electronics Manufacturing") +
   scale_fill_manual(
     values = c("Non-Superfund" = "mediumpurple3")
   ) +
@@ -1550,7 +1933,7 @@ ggplot() +
 ggsave("02_output/PFAS_sites_electric.png", height = 6, width = 7, units = "in")
 
 
-## pfas sites with pws ----
+## pfas sites with pws
 
 ggplot() +
   geom_sf(data = study_counties, fill = "grey97", color = "black", linewidth = 0.6) +
@@ -1624,7 +2007,7 @@ ggplot() +
 
 ggsave("02_output/PFAS_sites_pws_electric.png", height = 7, width = 8, units = "in")
 
-## pfas sites with pws pfas over mrl ----
+## pfas sites with pws pfas over mrl
 
 ggplot() +
   geom_sf(data = study_counties, fill = "grey97", color = "black", linewidth = 0.6) +
@@ -1696,7 +2079,236 @@ ggplot() +
       line_col = "black"
     )) 
 
-ggsave("02_output/PFAS_sites_pws_pfasovermrl_electric.png", height = 7, width = 8, units = "in")
+ggsave("02_output/PFAS_sites_pws_pfasovermrl_plastics.png", height = 7, width = 8, units = "in")
+
+
+
+
+# map plastics manufacturing facilities ----
+
+## pfas detected sites
+
+ggplot() +
+  geom_sf(data = study_counties, fill = "grey97", color = "black", linewidth = 0.6) +
+  geom_sf(data = neshaminy_creek, aes(fill = "Non-Superfund", color = "black")) +
+  geom_sf(data = plastics_geo_study, aes(color = "Unknown", shape = "Manufacturing"), size = 1.5) +
+  geom_sf(data = non_superfund, aes(color = "Non-Superfund", shape = "Manufacturing"), size = 2.5) +
+  geom_sf(data = filter(facilities_discharge_pfas, type == "Water Treatment Plant"), aes(color = "Discharge", shape = "Water Treatment Plant"), size = 3.5) +
+  geom_sf(data = filter(facilities_discharge_pfas, type == "Firefighter training"), aes(color = "Discharge", shape = "Firefighter training"), size = 5) +
+  geom_sf(data = filter(facilities_discharge_pfas, type == "Manufacturing"), aes(color = "Discharge", shape = "Manufacturing"), size = 2.5) +
+  geom_sf(data = filter(superfund_merge, type == "Landfill" & site == "Superfund"), aes(color = "Superfund", shape = "Landfill"), size = 2.5) +
+  geom_sf(data = filter(superfund_merge, type %in% c("Manufacturing", "Manufacturing/Military") & site == "Superfund"), aes(color = "Superfund", shape = "Manufacturing"), size = 2.5) +
+  geom_sf(data = filter(superfund_merge, type == "Military" & site == "Superfund"), aes(color = "Superfund", shape = "Military"), size = 2.5) +
+  geom_sf(data = filter(superfund_merge, type == "Landfill" & site == "State Advisory"), aes(color = "Non-Superfund", shape = "Landfill"), size = 2.5) +
+  geom_sf(data = filter(superfund_merge, type %in% c("Manufacturing", "Manufacturing/Military") & site == "Non-Superfund"), aes(color = "Non-Superfund", shape = "Manufacturing"), size = 2.5) +
+  geom_sf(data = filter(superfund_merge, type == "Military" & site == "State Advisory"), aes(color = "Non-Superfund", shape = "Military"), size = 2.5) +
+  geom_sf(data = ridge_run, aes(color = "Non-Superfund", shape = "Tire fire extinguished by FF Foam"), size = 5) +
+  labs(caption = "PFAS Detected Sites by Site Type and Government Recognition + Plastics Manufacturing") +
+  scale_fill_manual(
+    values = c("Non-Superfund" = "mediumpurple3")
+  ) +
+  scale_color_manual(
+    values = c(
+      "Discharge" = "forestgreen",
+      "Non-Superfund" = "mediumpurple3",
+      "Superfund" = "firebrick2",
+      "Unknown" = "royalblue3"
+    ),
+    labels = c("Discharge","Non-superfund","Superfund","Unknown")
+  ) +
+  scale_shape_manual(
+    values = c(
+      "Landfill" = 15,
+      "Manufacturing" = 16,
+      "Military" = 17,
+      "Water Treatment Plant" = 18,
+      "Firefighter training" = 8,
+      "Tire fire extinguished by FF Foam" = 4
+    ),
+    labels = c("Firefighter Training","Landfill","Manufacturing","Military","Tire Fire + FF Foam","Water Treatment Plant")
+  ) +
+  guides(
+    fill = "none",
+    color = guide_legend(title = "Govt Recognition",override.aes=list(fill="white")),
+    shape = guide_legend(title = "Site Type",override.aes=list(fill="white"))
+  ) +
+  theme(
+    plot.background = element_rect(color = "black", linewidth = 3),
+    plot.caption.position = "panel",
+    plot.caption = element_text(size = 12, hjust = 0, vjust = 3),
+    panel.background = element_rect(fill = "white"),
+    title = element_text(family = "Arial", size = 14),  # Set font size here
+    axis.title.x = element_blank(),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    legend.text = element_text(size = 10),
+    legend.title = element_text(size = 12),
+    legend.key = element_rect(colour = NA, fill = NA)
+  ) +
+  ggspatial::annotation_north_arrow(
+    location = "br", which_north = "true",
+    pad_x = unit(0.1, "in"), pad_y = unit(0.1, "in"),
+    height = unit(0.6, "in"), width = unit(0.6, "in"),
+    style = ggspatial::north_arrow_fancy_orienteering(
+      fill = c("black", "white"),
+      line_col = "black"
+    )) 
+
+ggsave("02_output/PFAS_sites_plastics.png", height = 6, width = 7, units = "in")
+
+
+## pfas sites with pws
+
+ggplot() +
+  geom_sf(data = study_counties, fill = "grey97", color = "black", linewidth = 0.6) +
+  geom_sf(data = filter(pws.shp.pfas_inst, any_pfas == 1), fill = "grey90", color = "grey50") +
+  geom_sf(data = neshaminy_creek, aes(fill = "Non-Superfund", color = "black")) +
+  geom_sf(data = plastics_geo_study, aes(color = "Unknown", shape = "Manufacturing"), size = 1.5) +
+  geom_sf(data = non_superfund, aes(color = "Non-Superfund", shape = "Manufacturing"), size = 2.5) +
+  geom_sf(data = filter(facilities_discharge_pfas, type == "Water Treatment Plant"), aes(color = "Discharge", shape = "Water Treatment Plant"), size = 3.5) +
+  geom_sf(data = filter(facilities_discharge_pfas, type == "Firefighter training"), aes(color = "Discharge", shape = "Firefighter training"), size = 5) +
+  geom_sf(data = filter(facilities_discharge_pfas, type == "Manufacturing"), aes(color = "Discharge", shape = "Manufacturing"), size = 2.5) +
+  geom_sf(data = filter(superfund_merge, type == "Landfill" & site == "Superfund"), aes(color = "Superfund", shape = "Landfill"), size = 2.5) +
+  geom_sf(data = filter(superfund_merge, type %in% c("Manufacturing", "Manufacturing/Military") & site == "Superfund"), aes(color = "Superfund", shape = "Manufacturing"), size = 2.5) +
+  geom_sf(data = filter(superfund_merge, type == "Military" & site == "Superfund"), aes(color = "Superfund", shape = "Military"), size = 2.5) +
+  geom_sf(data = filter(superfund_merge, type == "Landfill" & site == "State Advisory"), aes(color = "Non-Superfund", shape = "Landfill"), size = 2.5) +
+  geom_sf(data = filter(superfund_merge, type %in% c("Manufacturing", "Manufacturing/Military") & site == "Non-Superfund"), aes(color = "Non-Superfund", shape = "Manufacturing"), size = 2.5) +
+  geom_sf(data = filter(superfund_merge, type == "Military" & site == "State Advisory"), aes(color = "Non-Superfund", shape = "Military"), size = 2.5) +
+  geom_sf(data = ridge_run, aes(color = "Non-Superfund", shape = "Tire fire extinguished by FF Foam"), size = 5) +
+  labs(caption = "PFAS Detected Sites by Site Type and Government Recognition and PFAS Positive Public Water Supply") +
+  scale_fill_manual(
+    values = c("Non-Superfund" = "mediumpurple3")
+  ) +
+  scale_color_manual(
+    values = c(
+      "Discharge" = "forestgreen",
+      "Non-Superfund" = "mediumpurple3",
+      "Superfund" = "firebrick2",
+      "Unknown" = "royalblue3"
+    ),
+    labels = c("Discharge","Non-superfund","Superfund","Unknown")
+  ) +
+  scale_shape_manual(
+    values = c(
+      "Landfill" = 15,
+      "Manufacturing" = 16,
+      "Military" = 17,
+      "Water Treatment Plant" = 18,
+      "Firefighter training" = 8,
+      "Tire fire extinguished by FF Foam" = 4
+    ),
+    labels = c("Firefighter Training","Landfill","Manufacturing","Military","Tire Fire + FF Foam","Water Treatment Plant")
+  ) +
+  guides(
+    fill = "none",
+    color = guide_legend(title = "Govt Recognition",override.aes=list(fill="white")),
+    shape = guide_legend(title = "Site Type",override.aes=list(fill="white"))
+  ) +
+  theme(
+    plot.background = element_rect(color = "black", linewidth = 3),
+    plot.caption.position = "panel",
+    plot.caption = element_text(size = 12, hjust = 0, vjust = 3),
+    panel.background = element_rect(fill = "white"),
+    title = element_text(family = "Arial", size = 14),  # Set font size here
+    axis.title.x = element_blank(),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    legend.text = element_text(size = 10),
+    legend.title = element_text(size = 12),
+    legend.key = element_rect(colour = NA, fill = NA)
+  ) +
+  ggspatial::annotation_north_arrow(
+    location = "br", which_north = "true",
+    pad_x = unit(0.1, "in"), pad_y = unit(0.1, "in"),
+    height = unit(0.6, "in"), width = unit(0.6, "in"),
+    style = ggspatial::north_arrow_fancy_orienteering(
+      fill = c("black", "white"),
+      line_col = "black"
+    )) 
+
+ggsave("02_output/PFAS_sites_pws_plastics.png", height = 7, width = 8, units = "in")
+
+## pfas sites with pws pfas over mrl
+
+ggplot() +
+  geom_sf(data = study_counties, fill = "grey97", color = "black", linewidth = 0.6) +
+  geom_sf(data = filter(pws.shp.pfas_inst, pfas_over_mrl == 1), fill = "grey90", color = "grey50") +
+  geom_sf(data = neshaminy_creek, aes(fill = "Non-Superfund", color = "black")) +
+  geom_sf(data = electric_geo_study, aes(color = "Unknown", shape = "Manufacturing"), size = 1.5) +
+  geom_sf(data = non_superfund, aes(color = "Non-Superfund", shape = "Manufacturing"), size = 2.5) +
+  geom_sf(data = filter(facilities_discharge_pfas, type == "Water Treatment Plant"), aes(color = "Discharge", shape = "Water Treatment Plant"), size = 3.5) +
+  geom_sf(data = filter(facilities_discharge_pfas, type == "Firefighter training"), aes(color = "Discharge", shape = "Firefighter training"), size = 5) +
+  geom_sf(data = filter(facilities_discharge_pfas, type == "Manufacturing"), aes(color = "Discharge", shape = "Manufacturing"), size = 2.5) +
+  geom_sf(data = filter(superfund_merge, type == "Landfill" & site == "Superfund"), aes(color = "Superfund", shape = "Landfill"), size = 2.5) +
+  geom_sf(data = filter(superfund_merge, type %in% c("Manufacturing", "Manufacturing/Military") & site == "Superfund"), aes(color = "Superfund", shape = "Manufacturing"), size = 2.5) +
+  geom_sf(data = filter(superfund_merge, type == "Military" & site == "Superfund"), aes(color = "Superfund", shape = "Military"), size = 2.5) +
+  geom_sf(data = filter(superfund_merge, type == "Landfill" & site == "State Advisory"), aes(color = "Non-Superfund", shape = "Landfill"), size = 2.5) +
+  geom_sf(data = filter(superfund_merge, type %in% c("Manufacturing", "Manufacturing/Military") & site == "Non-Superfund"), aes(color = "Non-Superfund", shape = "Manufacturing"), size = 2.5) +
+  geom_sf(data = filter(superfund_merge, type == "Military" & site == "State Advisory"), aes(color = "Non-Superfund", shape = "Military"), size = 2.5) +
+  geom_sf(data = ridge_run, aes(color = "Non-Superfund", shape = "Tire fire extinguished by FF Foam"), size = 5) +
+  labs(caption = "PFAS Detected Sites by Site Type and Government Recognition and PFAS Positive Public Water Supply") +
+  scale_fill_manual(
+    values = c("Non-Superfund" = "mediumpurple3")
+  ) +
+  scale_color_manual(
+    values = c(
+      "Discharge" = "forestgreen",
+      "Non-Superfund" = "mediumpurple3",
+      "Superfund" = "firebrick2",
+      "Unknown" = "royalblue3"
+    ),
+    labels = c("Discharge","Non-superfund","Superfund","Unknown")
+  ) +
+  scale_shape_manual(
+    values = c(
+      "Landfill" = 15,
+      "Manufacturing" = 16,
+      "Military" = 17,
+      "Water Treatment Plant" = 18,
+      "Firefighter training" = 8,
+      "Tire fire extinguished by FF Foam" = 4
+    ),
+    labels = c("Firefighter Training","Landfill","Manufacturing","Military","Tire Fire + FF Foam","Water Treatment Plant")
+  ) +
+  guides(
+    fill = "none",
+    color = guide_legend(title = "Govt Recognition",override.aes=list(fill="white")),
+    shape = guide_legend(title = "Site Type",override.aes=list(fill="white"))
+  ) +
+  theme(
+    plot.background = element_rect(color = "black", linewidth = 3),
+    plot.caption.position = "panel",
+    plot.caption = element_text(size = 12, hjust = 0, vjust = 3),
+    panel.background = element_rect(fill = "white"),
+    title = element_text(family = "Arial", size = 14),  # Set font size here
+    axis.title.x = element_blank(),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    legend.text = element_text(size = 10),
+    legend.title = element_text(size = 12),
+    legend.key = element_rect(colour = NA, fill = NA)
+  ) +
+  ggspatial::annotation_north_arrow(
+    location = "br", which_north = "true",
+    pad_x = unit(0.1, "in"), pad_y = unit(0.1, "in"),
+    height = unit(0.6, "in"), width = unit(0.6, "in"),
+    style = ggspatial::north_arrow_fancy_orienteering(
+      fill = c("black", "white"),
+      line_col = "black"
+    )) 
+
+ggsave("02_output/PFAS_sites_pws_pfasovermrl_plastics.png", height = 7, width = 8, units = "in")
+
+
 
 
 
