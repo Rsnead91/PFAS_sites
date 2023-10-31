@@ -220,6 +220,120 @@ plastics_geo1 <- st_as_sf(
 plastics_geo_study <- st_intersection(study_counties, plastics_geo1)
 
 
+## airports ----
+
+airports_public_raw <- st_as_sf(
+                        read_excel("00_data/pa_public_airports.xlsx"),
+                        coords = c("X","Y")
+                        ) %>% 
+                          st_set_crs(st_crs(4269)) %>% # set coordinate system to match other geo files
+                          st_transform(crs = 4269) # set projection to match other geo files
+
+# spatial join
+
+airports <- st_intersection(
+  x = airports_public_raw,
+  y = study_counties
+)
+
+
+
+## possible PWS wells/intakes ----
+
+wells <- st_as_sf(
+          read_csv("00_data/Wells.csv"),
+          coords = c("Long","Lat")
+        ) %>% 
+          st_set_crs(st_crs(4269)) %>% # set coordinate system to match other geo files
+          st_transform(crs = 4269) # set projection to match other geo files
+
+wells <- st_intersection(
+  x = wells,
+  y = study_counties
+)
+
+intakes <- st_as_sf(
+            read_csv("00_data/Intakes.csv"),
+            coords = c("Long","Lat")
+          ) %>% 
+            st_set_crs(st_crs(4269)) %>% # set coordinate system to match other geo files
+            st_transform(crs = 4269) # set projection to match other geo files
+
+intakes <- st_intersection(
+  x = intakes,
+  y = study_counties
+)
+
+
+
+
+
+
+
+## firefighter training ----
+
+Fire_Training_Facilities <- st_as_sf(
+                              read_csv("00_data/Fire Training Facilities.csv"),
+                              coords = c("Long","Lat")
+                            ) %>% 
+                              st_set_crs(st_crs(4269)) %>% # set coordinate system to match other geo files
+                              st_transform(crs = 4269) # set projection to match other geo files
+
+
+## all landfills ----
+
+### municipality
+
+landfill_municipality <- get_spatial_layer("https://mapservices.pasda.psu.edu/server/rest/services/pasda/DEP/MapServer/20", sf_type = "esriGeometryPoint")%>% # downloading data directly from pasda website
+  st_set_crs(st_crs(4269)) %>% # set coordinate system to match other geo files
+  st_transform(crs = 4269) # set projection to match other geo files
+
+## repairing simple geometry issues in municipality and pws shapefiles
+landfill_municipality <- st_make_valid(landfill_municipality)
+
+### residual
+
+landfill_residual <- get_spatial_layer("https://mapservices.pasda.psu.edu/server/rest/services/pasda/DEP/MapServer/26", sf_type = "esriGeometryPoint") %>% # downloading data directly from pasda website
+  st_set_crs(st_crs(4269)) %>% # set coordinate system to match other geo files
+  st_transform(crs = 4269) # set projection to match other geo files
+
+## repairing simple geometry issues in municipality and pws shapefiles
+landfill_residual <- st_make_valid(landfill_residual)
+
+### combining landfill data and reducing to study area
+
+landfill <- rbind(landfill_municipality,landfill_residual)
+
+# spatial join
+
+landfill_studyarea <- st_intersection(
+  x = landfill,
+  y = study_counties
+)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 ## 2.3 pasda (public water supply areas) ----
@@ -1365,7 +1479,7 @@ colnames(contam_descrip) <- c("contaminant","num_pws_sampledchem","num_pws_chem_
 write_csv(contam_descrip, file = "00_data/contam_descrip.csv")
 
 
-
+wells <- st_read("00_data/PAGWIS_Water_Wells_All.shp")
 
 
 
