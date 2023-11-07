@@ -4,19 +4,23 @@
 
 if (!require("pacman")) install.packages("pacman")
 
-pacman::p_load('tidycensus','tidyverse','ggspatial','arcpullr','tigris','raster','pdftools','readxl','units','sf','ggmap','reshape2','janitor','ggpattern','tidygeocoder','lubridate')
+pacman::p_load('utils','tidycensus','tidyverse','ggspatial','arcpullr','tigris','raster','pdftools','readxl','units','sf','ggmap','reshape2','janitor','ggpattern','tidygeocoder','lubridate')
+
+options(scipen = 999)
 
 # 2. load data ----
 
-## 2.1 counties ----
-
-# pa_counties <- tigris::counties(state = "42", cb = TRUE)
+## 2.1 study area counties ----
 
 study_counties <- tigris::counties(state = "42", cb = TRUE) %>% 
                     filter(NAMELSAD %in% c("Berks County", "Bucks County", "Carbon County", "Chester County", "Delaware County", "Lancaster County", "Lebanon County", "Lehigh County", "Monroe County", "Montgomery County", "Northampton County", "Schuylkill County")) %>% 
                     st_set_crs(st_crs(4269))
+# saving shp
+st_write(study_counties, dsn = "00_data/study_counties.shp")
 
-## 2.2 superfund sites ----
+## 2.2 known pfas ----
+
+### 2.2.1 superfund sites ----
 
 superfund <- st_as_sf(
                 get_spatial_layer("https://gispub.epa.gov/arcgis/rest/services/OEI/FRS_INTERESTS/MapServer/21", sf_type = "esriGeometryPolygon") %>% # downloading data directly from pasda website
@@ -31,7 +35,7 @@ superfund <- st_as_sf(
 PFAS_detected_superfund_others <- read_excel("00_data/PFAS_detected_superfund_others.xlsx") %>% 
                                     clean_names() %>% 
                                     filter(site == "Superfund" | name %in% c("BISHOP TUBE CO","US ARMY NATIONAL GUARD FORT INDIANTOWN GAP","HIGH QUALITY POLISHING & PLATING","OLD FRACKVILLE DUMP")) %>% 
-                                    dplyr::select(-c(address,notes,links_to_more_info))
+                                    dplyr::select(-c(address,links_to_more_info,soil_sampling,soil_sampling_pfas,soil_sampling_notes,general_site_notes,possibly_responsible_parties))
 
 superfund_merge <- merge(x = superfund %>% 
                               dplyr::select(PRIMARY_NAME) %>% 
@@ -40,8 +44,11 @@ superfund_merge <- merge(x = superfund %>%
                          y = PFAS_detected_superfund_others, 
                          by = "name")
 
+# saving shp
+st_write(superfund_merge, dsn = "00_data/known_pfas_superfund_sites.shp")
 
-## 2.3 hsca sites ----
+
+### 2.2.2 hsca sites ----
 
 non_superfund <- st_as_sf(
                   data.frame(
@@ -60,23 +67,26 @@ non_superfund <- st_as_sf(
               ) %>% 
               st_set_crs(st_crs(4269))
 
+# saving shp
+st_write(non_superfund, dsn = "00_data/known_pfas_hsca_sites.shp")
 
-## 2.4 Neshaminy Creek Watershed ----
 
-#data pulled from here: https://prd-tnm.s3.amazonaws.com/index.html?prefix=StagedProducts/Hydrography/WBD/National/GDB/
+### 2.2.3 neshaminy creek watershed ----
 
-#importing watershed geodatabase
+# data pulled from here: https://prd-tnm.s3.amazonaws.com/index.html?prefix=StagedProducts/Hydrography/WBD/National/GDB/
 
-# Define the path to the geodatabase (.gdb) file
+# importing watershed geodatabase
+
+## Define the path to the geodatabase (.gdb) file
 gdb_path <- "/Users/rsnead91/Documents/Personal/Work/Jobs/PFAS + Cancer/PFAS_sites/00_data/WBD_National_GDB.gdb"
 
-# List available layers in the geodatabase
+## List available layers in the geodatabase
 layers <- st_layers(gdb_path)
 
-# Read the selected layer
+## Read the selected layer
 data <- st_read(dsn = gdb_path, layer = layers[["name"]][1]) #WBDHU12
 
-#reducing data to only neshaminy creek watershed and projecting
+# reducing data to only neshaminy creek watershed and projecting
 neshaminy <- data %>%
   mutate(name = toupper(name)) %>%         
   filter(str_detect(name, "NESHAMINY")) %>% 
@@ -86,7 +96,7 @@ neshaminy <- data %>%
 
 rm(data)
 
-#joining smaller sub-watersheds
+# joining smaller sub-watersheds
 neshaminy_union <- neshaminy %>%  
   group_by(states) %>% 
   summarise()
@@ -105,17 +115,21 @@ neshaminy_creek2 <- data.frame(
 neshaminy_creek <- cbind(neshaminy_union,neshaminy_creek2) %>%
                     dplyr::select(name,county,site,type,groundwater,surface_water,electronic_manufacturing,active)
 
-## 2.5 Ridge Run - East and West Rockhill Townships, Bucks County ----
+# saving shp
+st_write(neshaminy_creek, dsn = "00_data/known_pfas_neshaminy_creek_watershed.shp")
+
+
+### 2.2.4 ridge run - east and west rockhill townships, bucks county ----
 
 ridge_run <- get_spatial_layer("https://mapservices.pasda.psu.edu/server/rest/services/pasda/PennDOT/MapServer/10", sf_type = "esriGeometryPolygon") %>% # downloading data directly from pasda website
   st_set_crs(st_crs(4269)) %>% # set coordinate system to match other geo files
   st_transform(crs = 4269) %>% # set projection to match other geo files
   dplyr::filter(FIPS_COUNT == "017" & MUNICIPAL1 %in% c("EAST ROCKHILL","WEST ROCKHILL","PERKASIE")) # only keeping estimated area of landfill
 
-## repairing simple geometry issues in municipality and pws shapefiles
+# repairing simple geometry issues in municipality and pws shapefiles
 ridge_run <- st_make_valid(ridge_run)
 
-## dissolving the two municipalities into a single shape and findinf the centroid
+# dissolving the two municipalities into a single shape and findinf the centroid
 ridge_run_union <- ridge_run %>%  
                     group_by(FIPS_COUNT) %>% 
                     summarise() %>% 
@@ -135,8 +149,11 @@ ridge_run2 <- data.frame(
 ridge_run <- cbind(ridge_run_union,ridge_run2) %>% 
               dplyr::select(-FIPS_COUNT)
 
+# saving shp
+st_write(ridge_run, dsn = "00_data/known_pfas_ridge_run.shp")
 
-## facilities with pfas discharge 
+
+### 2.2.5 facilities with pfas discharge ----
 
 facilities_discharge_pfas <- st_read("00_data/Facilities_dishcarge_PFAS.shp") %>% 
   st_drop_geometry() %>% 
@@ -158,69 +175,13 @@ facilities_discharge_pfas2 <- data.frame(
 
 facilities_discharge_pfas <- cbind(facilities_discharge_pfas,facilities_discharge_pfas2)
 
+# saving shp
+st_write(facilities_discharge_pfas, dsn = "00_data/known_pfas_discharge.shp")
 
 
-## electronics manufacturing in pa registered with federal govt NAICS: 334000 ----
+## 2.3 suspected pfas ----
 
-electric <- read_csv("00_data/EntityPAElectronicsManufacturing.csv") %>% 
-              clean_names() %>% 
-              mutate(address = str_c(address_line_1,", ",city,", ",state_province," ",zip_code)) %>% 
-              tidygeocoder::geocode(address = address, method = 'osm', lat = latitude , long = longitude)
-
-electric_na <- electric %>% 
-                filter(is.na(latitude)) %>% 
-                dplyr::select(-c(latitude,longitude))
-
-electric_na_retry <- electric_na %>% 
-                      tidygeocoder::geocode(street = address_line_1, city = city, state = state_province, postalcode = zip_code, method = 'census', lat = latitude , long = longitude)
-
-electric_nona <- rbind(
-                  electric %>% 
-                   filter(!is.na(latitude)),
-                  electric_na_retry %>% 
-                   filter(!is.na(latitude))
-                )
-
-electric_geo1 <- st_as_sf(
-                  electric_nona,
-                  coords = c("longitude","latitude")
-                ) %>% 
-                  st_set_crs(st_crs(4269))
-
-electric_geo_study <- st_intersection(study_counties, electric_geo1)
-
-
-## plastics manufacturing in pa registered with federal govt NAICS: 326100 ----
-
-plastics <- read_csv("00_data/EntityPAPlasticsManufacturing.csv") %>% 
-  clean_names() %>% 
-  mutate(address = str_c(address_line_1,", ",city,", ",state_province," ",zip_code)) %>% 
-  tidygeocoder::geocode(address = address, method = 'osm', lat = latitude , long = longitude)
-
-plastics_na <- plastics %>% 
-  filter(is.na(latitude)) %>% 
-  dplyr::select(-c(latitude,longitude))
-
-plastics_na_retry <- plastics_na %>% 
-  tidygeocoder::geocode(street = address_line_1, city = city, state = state_province, postalcode = zip_code, method = 'census', lat = latitude , long = longitude)
-
-plastics_nona <- rbind(
-  plastics %>% 
-    filter(!is.na(latitude)),
-  plastics_na_retry %>% 
-    filter(!is.na(latitude))
-)
-
-plastics_geo1 <- st_as_sf(
-  plastics_nona,
-  coords = c("longitude","latitude")
-) %>% 
-  st_set_crs(st_crs(4269))
-
-plastics_geo_study <- st_intersection(study_counties, plastics_geo1)
-
-
-## airports ----
+### 2.3.1 airports ----
 
 airports_public_raw <- st_as_sf(
                         read_excel("00_data/pa_public_airports.xlsx"),
@@ -236,41 +197,11 @@ airports <- st_intersection(
   y = study_counties
 )
 
+# saving shp
+st_write(airports, dsn = "00_data/susp_pfas_airports.shp")
 
 
-## possible PWS wells/intakes ----
-
-wells <- st_as_sf(
-          read_csv("00_data/Wells.csv"),
-          coords = c("Long","Lat")
-        ) %>% 
-          st_set_crs(st_crs(4269)) %>% # set coordinate system to match other geo files
-          st_transform(crs = 4269) # set projection to match other geo files
-
-wells <- st_intersection(
-  x = wells,
-  y = study_counties
-)
-
-intakes <- st_as_sf(
-            read_csv("00_data/Intakes.csv"),
-            coords = c("Long","Lat")
-          ) %>% 
-            st_set_crs(st_crs(4269)) %>% # set coordinate system to match other geo files
-            st_transform(crs = 4269) # set projection to match other geo files
-
-intakes <- st_intersection(
-  x = intakes,
-  y = study_counties
-)
-
-
-
-
-
-
-
-## firefighter training ----
+### 2.3.2 firefighter training sites ----
 
 Fire_Training_Facilities <- st_as_sf(
                               read_csv("00_data/Fire Training Facilities.csv"),
@@ -279,28 +210,31 @@ Fire_Training_Facilities <- st_as_sf(
                               st_set_crs(st_crs(4269)) %>% # set coordinate system to match other geo files
                               st_transform(crs = 4269) # set projection to match other geo files
 
+# saving shp
+st_write(Fire_Training_Facilities, dsn = "00_data/susp_pfas_firefighter_training.shp")
 
-## all landfills ----
 
-### municipality
+### 2.3.3 landfill sites ----
+
+# municipality
 
 landfill_municipality <- get_spatial_layer("https://mapservices.pasda.psu.edu/server/rest/services/pasda/DEP/MapServer/20", sf_type = "esriGeometryPoint")%>% # downloading data directly from pasda website
   st_set_crs(st_crs(4269)) %>% # set coordinate system to match other geo files
   st_transform(crs = 4269) # set projection to match other geo files
 
-## repairing simple geometry issues in municipality and pws shapefiles
+# repairing simple geometry issues in municipality and pws shapefiles
 landfill_municipality <- st_make_valid(landfill_municipality)
 
-### residual
+# residual
 
 landfill_residual <- get_spatial_layer("https://mapservices.pasda.psu.edu/server/rest/services/pasda/DEP/MapServer/26", sf_type = "esriGeometryPoint") %>% # downloading data directly from pasda website
   st_set_crs(st_crs(4269)) %>% # set coordinate system to match other geo files
   st_transform(crs = 4269) # set projection to match other geo files
 
-## repairing simple geometry issues in municipality and pws shapefiles
+# repairing simple geometry issues in municipality and pws shapefiles
 landfill_residual <- st_make_valid(landfill_residual)
 
-### combining landfill data and reducing to study area
+# combining landfill data and reducing to study area
 
 landfill <- rbind(landfill_municipality,landfill_residual)
 
@@ -311,34 +245,65 @@ landfill_studyarea <- st_intersection(
   y = study_counties
 )
 
+# saving shp
+st_write(landfill_studyarea, dsn = "00_data/susp_pfas_landfills.shp")
 
 
+### 2.3.4 EPA's envirofacts facilities registry: potential sources of PFAS ----
+
+manufacturing <- st_as_sf(
+                  filter(read_excel("00_data/envirofacts_studyarea.xlsx"), !is.na(LONGITUDE83)),
+                  coords = c("LONGITUDE83","LATITUDE83")
+                ) %>% 
+                  st_set_crs(st_crs(4269)) %>% # set coordinate system to match other geo files
+                  st_transform(crs = 4269) # set projection to match other geo files
+
+manufacturing <- st_intersection(
+  x = manufacturing,
+  y = study_counties
+)
+
+# saving shp
+st_write(manufacturing, dsn = "00_data/susp_pfas_manufacturing.shp")
 
 
+## 2.4 possible PWS wells/intakes ----
+
+wells <- st_as_sf(
+  read_csv("00_data/Wells.csv"),
+  coords = c("Long","Lat")
+) %>% 
+  st_set_crs(st_crs(4269)) %>% # set coordinate system to match other geo files
+  st_transform(crs = 4269) # set projection to match other geo files
+
+wells <- st_intersection(
+  x = wells,
+  y = study_counties
+)
+
+# saving shp
+st_write(wells, dsn = "00_data/wells.shp")
 
 
+intakes <- st_as_sf(
+  read_csv("00_data/Intakes.csv"),
+  coords = c("Long","Lat")
+) %>% 
+  st_set_crs(st_crs(4269)) %>% # set coordinate system to match other geo files
+  st_transform(crs = 4269) # set projection to match other geo files
+
+intakes <- st_intersection(
+  x = intakes,
+  y = study_counties
+)
+
+# saving shp
+st_write(intakes, dsn = "00_data/intakes.shp")
 
 
+## 2.5 public water supply areas ----
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-## 2.3 pasda (public water supply areas) ----
-
-pws.shp <- get_spatial_layer("https://mapservices.pasda.psu.edu/server/rest/services/pasda/DEP2/MapServer/8", sf_type = "esriGeometryPolygon") %>% # downloading data directly from pasda website
+pws <- get_spatial_layer("https://mapservices.pasda.psu.edu/server/rest/services/pasda/DEP2/MapServer/8", sf_type = "esriGeometryPolygon") %>% # downloading data directly from pasda website
   st_set_crs(st_crs(4269)) %>% # set coordinate system to match other geo files
   st_transform(crs = 4269) %>% # set projection to match other geo files
   dplyr::filter(CNTY_NAME %in% c("Berks", "Bucks", "Carbon", "Chester", "Delaware", "Lancaster", "Lebanon", "Lehigh", "Monroe", "Montgomery", "Northampton", "Schuylkill")) # only keeping 12 study area counties
@@ -346,30 +311,19 @@ pws.shp <- get_spatial_layer("https://mapservices.pasda.psu.edu/server/rest/serv
 #nrow(pws.shp): 581
 
 ## repairing simple geometry issues in pws shapefiles
-pws.shp <- st_make_valid(pws.shp)
+pws <- st_make_valid(pws)
 
-pws.pfastest <- read_excel("00_data/Public Water Supply x PFAS Test_onlysheet1.xlsx", .name_repair = "universal") %>% # .name_repair replaces spaces in variable names with '.' 
-                  mutate(tested = Tested.by.DEP.or.UCMR.3, # creating new variables for merging and easier variable naming
-                         PWS_ID = as.character(pwsid)) %>% 
-                  rename(any_pfas = Overall.Detected..Any.PFAS.Value,
-                         pfas_over_mrl = Overall.Detected.6.PFAS.Value.at.or.above.MRL) %>%
-                  dplyr::select(PWS_ID, tested, any_pfas, pfas_over_mrl) # only keeping PWS ID and testing column
-
-pws.shp.pfas <- merge(x = pws.shp, y = pws.pfastest, by = "PWS_ID", all = TRUE) %>% # merge pws shapefiles and pfas testing data, retaining merge matches on x and y
-  filter(tested == 1 & !(OWNERSHIP %in% c("Mobile Home Park","Apartments","Institutional Recreational","Institutional Military","Institutional Health","Institutional Education","Institutional Correctional")))
-
-pws.shp.pfas_inst <- merge(x = pws.shp, y = pws.pfastest, by = "PWS_ID", all = TRUE) %>% # merge pws shapefiles and pfas testing data, retaining merge matches on x and y
-                      filter(tested == 1)
+# saving shp
+st_write(pws, dsn = "00_data/pws.shp")
 
 
+## 2.6 pfas sampling data ----
 
+### 2.6.1 pa dep ----
 
+# this step was performed with the support of this blog post: https://medium.com/swlh/the-adventure-of-pdf-to-data-frame-in-r-f90609035600
 
-## 2.4 pa dep sampling data ----
-
-## this step was performed with the support of this blog post: https://medium.com/swlh/the-adventure-of-pdf-to-data-frame-in-r-f90609035600
-
-### 2019 ----
+### 2.6.1.1 2019 ----
 
 ## url to pa department of environmental protections sampling data of the PDF file
 pdf_url <- "https://files.dep.state.pa.us/Water/DrinkingWater/Perfluorinated%20Chemicals/SamplingResults/PFASPhase1ResultsSummary.pdf"
@@ -455,7 +409,7 @@ dep_sampling_2019 <- dep_sampling_2019_wide %>%
 
 rm(ds,left,right,NH_names,pdf_text,pdf_url,names_ex,words_df)
 
-### 2020 ----
+### 2.6.1.2 2020 ----
 
 ## url to pa department of environmental protections sampling data of the PDF file
 pdf_url <- "https://files.dep.state.pa.us/Water/DrinkingWater/Perfluorinated%20Chemicals/SamplingResults/SUMMARY_OF_RESULTS_PFAS_PHASE_1_2020.pdf"
@@ -549,8 +503,7 @@ dep_sampling_2020 <- dep_sampling_2020_wide %>%
 
 rm(ds,left,right,NH_names,pdf_text,pdf_url,names_ex,words_df)
 
-
-### 2021 ----
+### 2.6.1.3 2021 ----
 
 ## url to pa department of environmental protections sampling data of the PDF file
 pdf_url <- "https://files.dep.state.pa.us/Water/DrinkingWater/Perfluorinated%20Chemicals/SamplingResults/PFAS_Sampling_Final_Results_May_2021.pdf"
@@ -650,7 +603,7 @@ dep_sampling_2019_2020_2021 <- rbind(dep_sampling_2019, dep_sampling_2020, dep_s
 # save(dep_sampling_2019_2020_2021, file = "00_data/dep_sampling_2019_2020_2021.Rdata")
 
 
-## ucmr 3 data ----
+### 2.6.2 ucmr 3 ----
 
 ucmr3 <- read_tsv("00_data/UCMR3_ALL_MA_WY.txt") %>% 
   filter(State == "PA" & Contaminant %in% c("PFHpA", "PFHxS", "PFNA", "PFOA", "PFOS", "PFBS")) %>% 
@@ -663,7 +616,7 @@ ucmr3 <- read_tsv("00_data/UCMR3_ALL_MA_WY.txt") %>%
 colnames(ucmr3) <- tolower(colnames(ucmr3))
 
 
-## ucmr 5 data ----
+### 2.6.3 ucmr 5 ----
 
 # the following chems are in dep sampling but not ucmr 5: netfosaa, nmefosaa, pfta, pftrda
 # the following chems are in ucmr 5 but not dep sampling: pfpea, pfpes, pfmba, pfmpa, pfhps, pfeesa, pfba, nfdha, x4_2_fts, x6_2_fts, x8_2_fts
@@ -679,25 +632,33 @@ ucmr5 <- read_tsv("00_data/UCMR5_ALL_MA_WY.txt") %>%
 colnames(ucmr5) <- tolower(colnames(ucmr5))
 
 
-# merge all sampling data ----
+### 2.6.4 merging all sampling data  ----
 
 ## dep
 reduce_to_study_pwsid <- pws.shp %>% 
                                 dplyr::select(PWS_ID) %>% 
                                 st_drop_geometry()
 
-colnames(reduce_ucmr_to_study_pwsid) <- tolower(colnames(reduce_ucmr_to_study_pwsid))
+colnames(reduce_to_study_pwsid) <- tolower(colnames(reduce_to_study_pwsid))
 
-dep <- left_join(x=reduce_ucmr_to_study_pwsid, y=dep_sampling_2019_2020_2021, by = c("pws_id" = "pwsid")) %>% 
+dep <- left_join(x=reduce_to_study_pwsid, y=dep_sampling_2019_2020_2021, by = c("pws_id" = "pwsid")) %>% 
   drop_na(collectiondate) %>% 
   mutate(data_source = "DEP")
 
 ## ucmr
-ucmr <- left_join(x=reduce_ucmr_to_study_pwsid, y=rbind(ucmr3,ucmr5), by = c("pws_id" = "pwsid")) %>% 
+ucmr <- left_join(x=reduce_to_study_pwsid, y=rbind(ucmr3,ucmr5), by = c("pws_id" = "pwsid")) %>% 
   drop_na(collectiondate) %>% 
   mutate(data_source = "UCMR") %>% 
   clean_names()
-  
+
+# pa_pfas_sampling_ucmr3dep <- rbind(
+#   cbind(
+#     dep,
+#     data.frame(sampleid = NA, samplepointname = NA, facilitywatertype = NA, mrl = NA, analyticalresultssign = NA)
+#   ),
+#   ucmr
+# )
+
 ## all pa pfas sampling
 pa_pfas_sampling <- rbind(
                       cbind(
@@ -713,22 +674,78 @@ pa_pfas_sampling$collectiondate <- mdy(pa_pfas_sampling$collectiondate)
 # save(pa_pfas_sampling, file = "00_data/pa_pfas_sampling.Rdata")
 
 
-## calculating aggregate variables and wide ds ----
+## 2.7 unused data ----
+
+### electronics manufacturing in pa registered with federal govt NAICS: 334000
+
+# electric <- read_csv("00_data/EntityPAElectronicsManufacturing.csv") %>% 
+#               clean_names() %>% 
+#               mutate(address = str_c(address_line_1,", ",city,", ",state_province," ",zip_code)) %>% 
+#               tidygeocoder::geocode(address = address, method = 'osm', lat = latitude , long = longitude)
+# 
+# electric_na <- electric %>% 
+#                 filter(is.na(latitude)) %>% 
+#                 dplyr::select(-c(latitude,longitude))
+# 
+# electric_na_retry <- electric_na %>% 
+#                       tidygeocoder::geocode(street = address_line_1, city = city, state = state_province, postalcode = zip_code, method = 'census', lat = latitude , long = longitude)
+# 
+# electric_nona <- rbind(
+#                   electric %>% 
+#                    filter(!is.na(latitude)),
+#                   electric_na_retry %>% 
+#                    filter(!is.na(latitude))
+#                 )
+# 
+# electric_geo1 <- st_as_sf(
+#                   electric_nona,
+#                   coords = c("longitude","latitude")
+#                 ) %>% 
+#                   st_set_crs(st_crs(4269))
+# 
+# electric_geo_study <- st_intersection(study_counties, electric_geo1)
+
+### plastics manufacturing in pa registered with federal govt NAICS: 326100
+
+# plastics <- read_csv("00_data/EntityPAPlasticsManufacturing.csv") %>% 
+#   clean_names() %>% 
+#   mutate(address = str_c(address_line_1,", ",city,", ",state_province," ",zip_code)) %>% 
+#   tidygeocoder::geocode(address = address, method = 'osm', lat = latitude , long = longitude)
+# 
+# plastics_na <- plastics %>% 
+#   filter(is.na(latitude)) %>% 
+#   dplyr::select(-c(latitude,longitude))
+# 
+# plastics_na_retry <- plastics_na %>% 
+#   tidygeocoder::geocode(street = address_line_1, city = city, state = state_province, postalcode = zip_code, method = 'census', lat = latitude , long = longitude)
+# 
+# plastics_nona <- rbind(
+#   plastics %>% 
+#     filter(!is.na(latitude)),
+#   plastics_na_retry %>% 
+#     filter(!is.na(latitude))
+# )
+# 
+# plastics_geo1 <- st_as_sf(
+#   plastics_nona,
+#   coords = c("longitude","latitude")
+# ) %>% 
+#   st_set_crs(st_crs(4269))
+# 
+# plastics_geo_study <- st_intersection(study_counties, plastics_geo1)
+# 
+# ggplot() +
+#   geom_sf(data = study_counties, fill = "grey97", color = "black", linewidth = 0.6) +
+#   geom_sf(data = plastics_geo_study)
+
+
+# 3. calculating aggregate variables and wide ds ----
 
 # hierarchy:
 ## pwsid
 ### collection date
 #### contaminent
 ##### sample site
-
-
-# pa_pfas_sampling_ucmr3dep <- rbind(
-#   cbind(
-#     dep,
-#     data.frame(sampleid = NA, samplepointname = NA, facilitywatertype = NA, mrl = NA, analyticalresultssign = NA)
-#   ),
-#   ucmr
-# )
 
 # add number for collection date
 pa_pfas_sampling <- left_join(
@@ -742,13 +759,12 @@ pa_pfas_sampling <- left_join(
                       by = c("pws_id","collectiondate")
                     )
 
-#  tested for pfas and number of samples tested
+# number of samples tested
 pa_pfas_sampling_wide <- pa_pfas_sampling %>% 
                           group_by(pws_id) %>% 
                           mutate(num_samples = n()) %>% 
                           ungroup() %>% 
-                          distinct(pws_id, num_samples) %>% 
-                          mutate(tested = 1)
+                          distinct(pws_id, num_samples)
 
 # number of sample locations
 pa_pfas_sampling_wide <- left_join(
@@ -782,79 +798,19 @@ pa_pfas_sampling_wide <- left_join(
 #                           ,
 #                           by = "pws_id"
 #                       )
-# 
+
+# number of tests in groundwater and surface water and number of positive pfas in each
 # pa_pfas_sampling_wide <- left_join(
 #                             pa_pfas_sampling_wide,
 #                             pa_pfas_sampling %>% 
-#                             filter(date == 2) %>% 
-#                             group_by(pws_id) %>%
-#                             mutate(num_samples_date2 = n()) %>% 
-#                             distinct(pws_id, num_samples_date2)
-#                           ,
-#                           by = "pws_id"
-#                     )
-# 
-# pa_pfas_sampling_wide <- left_join(
-#                             pa_pfas_sampling_wide,
-#                             pa_pfas_sampling %>% 
-#                             filter(date == 3) %>% 
-#                             group_by(pws_id) %>%
-#                             mutate(num_samples_date3 = n()) %>% 
-#                             distinct(pws_id, num_samples_date3)
+#                             distinct(pws_id, collectiondate, facilitywatertype) %>% 
+#                             group_by(pws_id) %>% 
+#                             summarise(num_gw = length(facilitywatertype == "GW"),
+#                                       num_sw = length(facilitywatertype == "SW")
+#                                       )
 #                           ,
 #                           by = "pws_id"
 #                       )
-
-
-
-# number of samples from prior date at the same location. may need to add variable for name of location
-# date1 equals all samples on that date. four possible combinations:
-# date1, date2, date3
-# date1, date2
-# date1, date3
-# date2, date3
-
-# pws_id contaminant collectiondate sample_num sample_location_name
-# 1 1 1 1 blue
-# 1 1 1 1 red
-# 1 1 2 1 blue
-# 2 1 1 1 blue
-
-
-# view(
-#   ucmr5_long %>% 
-#     group_by(pws_id, contaminant, collectiondate) %>% 
-#     dplyr::select(pws_id, contaminant, collectiondate, sampleid, samplepointname, date)
-# )
-# 
-# 
-# group - pws_id, contaminant
-# view(arrange(ucmr5_long, pws_id, contaminant, collectiondate, sampleid))
-# 
-# 
-# 
-# test <- ucmr5_long %>%
-#           group_by(pws_id, contaminant) %>%
-#           summarize(matches = n_distinct(unlist(strsplit(paste(samplepointname, collapse = " "), " "))))
-
-
-
-
-
-
-
-# number of tests in groundwater and surface water and number of positive pfas in each
-pa_pfas_sampling_wide <- left_join(
-                            pa_pfas_sampling_wide,
-                            pa_pfas_sampling %>% 
-                            distinct(pws_id, collectiondate, facilitywatertype) %>% 
-                            group_by(pws_id) %>% 
-                            summarise(num_gw = length(facilitywatertype == "GW"),
-                                      num_sw = length(facilitywatertype == "SW")
-                                      )
-                          ,
-                          by = "pws_id"
-                      )
 
 # how many pfas chemicals tested
 pa_pfas_sampling_wide <- left_join(
@@ -863,22 +819,6 @@ pa_pfas_sampling_wide <- left_join(
                             distinct(pws_id, contaminant) %>% 
                             group_by(pws_id) %>% 
                             summarise(num_contaminants_tested = n())
-                          ,
-                          by = "pws_id"
-                        )
-
-# any pfas detected
-pa_pfas_sampling_wide <- left_join(
-                            pa_pfas_sampling_wide,
-                            pa_pfas_sampling %>% 
-                            group_by(pws_id) %>% 
-                            summarise(any_contaminants_above_mrl = sum(
-                                                  ifelse(
-                                                    sum(analyticalresultssign == "=") > 0,
-                                                    1, 0
-                                                  )
-                                                ),
-                            )
                           ,
                           by = "pws_id"
                         )
@@ -895,102 +835,278 @@ pa_pfas_sampling_wide <- left_join(
                           by = "pws_id"
       )
 
-pa_pfas_sampling["num_contaminants_above_mrl"][is.na(pa_pfas_sampling["num_contaminants_above_mrl"])] <- 0
+pa_pfas_sampling_wide["num_contaminants_above_mrl"][is.na(pa_pfas_sampling_wide["num_contaminants_above_mrl"])] <- 0
+
+# any pfas detected
+pa_pfas_sampling_wide$any_contaminants_above_mrl <- ifelse(pa_pfas_sampling_wide$num_contaminants_above_mrl > 0, 1, 0)
 
 # how many chemicals detected above mrl from groundwater samples
-pa_pfas_sampling_wide <- left_join(
-                            pa_pfas_sampling_wide,
-                            pa_pfas_sampling %>% 
-                            filter(facilitywatertype == "GW" & analyticalresultssign == "=") %>% 
-                            distinct(pws_id, contaminant) %>% 
-                            group_by(pws_id) %>% 
-                            summarise(num_gw_pfas_above_mrl = n())
-                          ,
-                          by = "pws_id"
-      )
-
-pa_pfas_sampling["num_gw_pfas_above_mrl"][is.na(pa_pfas_sampling["num_gw_pfas_above_mrl"])] <- 0
+# pa_pfas_sampling_wide <- left_join(
+#                             pa_pfas_sampling_wide,
+#                             pa_pfas_sampling %>% 
+#                             filter(facilitywatertype == "GW" & analyticalresultssign == "=") %>% 
+#                             distinct(pws_id, contaminant) %>% 
+#                             group_by(pws_id) %>% 
+#                             summarise(num_gw_pfas_above_mrl = n())
+#                           ,
+#                           by = "pws_id"
+#       )
+# 
+# pa_pfas_sampling["num_gw_pfas_above_mrl"][is.na(pa_pfas_sampling["num_gw_pfas_above_mrl"])] <- 0
 
 # how many chemicals detected above mrl from surface water samples
+# pa_pfas_sampling_wide <- left_join(
+#                             pa_pfas_sampling_wide,
+#                             pa_pfas_sampling %>% 
+#                             filter(facilitywatertype == "SW" & analyticalresultssign == "=") %>% 
+#                             distinct(pws_id, contaminant) %>% 
+#                             group_by(pws_id) %>% 
+#                             summarise(num_sw_pfas_above_mrl = n())
+#                           ,
+#                           by = "pws_id"
+#       )
+# 
+# pa_pfas_sampling["num_sw_pfas_above_mrl"][is.na(pa_pfas_sampling["num_sw_pfas_above_mrl"])] <- 0
+
+# converting DEP units to match UCMR
+#UCMR values and MRL are in micrograms/liter while PA DEP is in nanograms/liter
+
+pa_pfas_sampling$analyticalresultvalue <- ifelse(
+                                            pa_pfas_sampling$data_source == "DEP",
+                                            as.numeric(pa_pfas_sampling$analyticalresultvalue)/1000,
+                                            as.numeric(pa_pfas_sampling$analyticalresultvalue)
+                                            )
+  
+# summary pfas detected variable
+
+# !!!! BASED ON MRL FROM UCMR5!!!
+
+pa_pfas_sampling <- pa_pfas_sampling %>% 
+                      mutate(
+                        mrl = case_when( #MRLs: https://www.epa.gov/dwucmr/fifth-unregulated-contaminant-monitoring-rule#scope
+                          contaminant == 'pfoa' ~ 0.004,
+                          contaminant == 'pfos' ~ 0.004,
+                          contaminant == 'pfba' ~ 0.005,
+                          contaminant == '6:2 fts' ~ 0.005,
+                          contaminant == '9cl-pf3ons' ~ 0.002,
+                          contaminant == '11cl-pf3ouds' ~ 0.005,
+                          contaminant == 'pfna' ~ 0.004,
+                          contaminant == 'pfbs' ~ 0.003,
+                          contaminant == 'pfhxs' ~ 0.003,
+                          contaminant == 'pfhxa' ~ 0.003,
+                          contaminant == '8:2 fts' ~ 0.005,
+                          contaminant == 'pfmpa' ~ 0.004,
+                          contaminant == 'pfpea' ~ 0.003,
+                          contaminant == 'hfpo-da' ~ 0.005,
+                          contaminant == '4:2 fts' ~ 0.003,
+                          contaminant == 'pfhps' ~ 0.003,
+                          contaminant == 'pfda' ~ 0.003,
+                          contaminant == 'pfuna' ~ 0.002,
+                          contaminant == 'pfpes' ~ 0.004,
+                          contaminant == 'adona' ~ 0.003,
+                          contaminant == 'pfdoa' ~ 0.003,
+                          contaminant == 'pfeesa' ~ 0.003,
+                          contaminant == 'nfdha' ~ 0.020,
+                          contaminant == 'pfhpa' ~ 0.003,
+                          contaminant == 'pfmba' ~ 0.003,
+                          contaminant == 'nmefosaa' ~ 0.006,
+                          contaminant == 'pfta' ~ 0.008,
+                          contaminant == 'pftrda' ~ 0.007,
+                          contaminant == 'netfosaa' ~ 0.005
+                        )
+                      )
+
+pa_pfas_sampling$analyticalresultssign <- ifelse(
+                                              pa_pfas_sampling$data_source == "DEP",
+                                              case_when(
+                                                pa_pfas_sampling$analyticalresultvalue >= pa_pfas_sampling$mrl ~ "=",
+                                                pa_pfas_sampling$analyticalresultvalue < pa_pfas_sampling$mrl ~ "<"
+                                                ),
+                                              pa_pfas_sampling$analyticalresultssign
+                                          )
+
+pa_pfas_sampling <- pa_pfas_sampling %>% 
+                      mutate(
+                        pfas_detected_source = case_when(
+                          (data_source == "DEP" & (analyticalresultvalue == 0)) ~ "DEP: Not detected",
+                          (data_source == "DEP" & (analyticalresultvalue > 0)) ~ "DEP: Detected",
+                          (data_source == "UCMR" & (analyticalresultssign == "<")) ~ "UCMR: Detected below MRL",
+                          (data_source == "UCMR" & (analyticalresultssign == "=")) ~ "UCMR: Detected at or above MRL"
+                        ),
+                        pfas_detected = case_when(
+                          (data_source == "DEP" & (analyticalresultvalue == 0)) ~ "Not detected",
+                          (data_source == "UCMR" & (analyticalresultssign == "<")) ~ "Detected at 0 or less than MRL",
+                          (data_source == "DEP" & ((analyticalresultvalue > 0) & (analyticalresultvalue < mrl))) ~ "Detected above 0 but below MRL",
+                          (data_source == "UCMR" & (analyticalresultssign == "=")) | (data_source == "DEP" & (analyticalresultvalue > mrl)) ~ "Detected at or above MRL"
+                        )
+                      )
+
 pa_pfas_sampling_wide <- left_join(
-                            pa_pfas_sampling_wide,
-                            pa_pfas_sampling %>% 
-                            filter(facilitywatertype == "SW" & analyticalresultssign == "=") %>% 
-                            distinct(pws_id, contaminant) %>% 
+  pa_pfas_sampling_wide,
+  pa_pfas_sampling %>% 
+    group_by(pws_id) %>% 
+    mutate(pfas_detected_above_mrl = as.integer("Detected at or above MRL" %in% pfas_detected),
+           pfas_detected_above_0 = as.integer("Detected above 0 but below MRL" %in% pfas_detected),
+           pfas_detected_below_mrl = as.integer("Detected at 0 or less than MRL" %in% pfas_detected),
+           pfas_not_detected = as.integer("Not detected" %in% pfas_detected),
+           pfas_detected_4cat = 
+             ifelse(
+               pfas_detected_above_mrl == 1,
+               "PFAS detected at or above MRL",
+               ifelse(
+                 pfas_detected_above_0 == 1,
+                 "PFAS detected above 0 but below MRL",
+                 ifelse(
+                   pfas_detected_below_mrl == 1,
+                   "PFAS detected at 0 or less than MRL",
+                   "PFAS not detected"
+                 )
+               )
+             )
+    ) %>% 
+    distinct(pws_id, pfas_detected_4cat),
+  by = "pws_id"
+)
+
+# table(pa_pfas_sampling_wide$pfas_detected_4cat)
+
+# which pfas chemicals were measured at all?
+pa_pfas_sampling_wide <- left_join(
+                          pa_pfas_sampling_wide,
+                          pa_pfas_sampling %>% 
+                            mutate(
+                              x11cl_pf3ouds_any_value = ifelse(contaminant == "11cl-pf3ouds" & !is.na(analyticalresultvalue), 1, 0),
+                              x4_2fts_any_value = ifelse(contaminant == "4:2 fts" & !is.na(analyticalresultvalue), 1, 0),
+                              x6_2fts_any_value = ifelse(contaminant == "6:2 fts" & !is.na(analyticalresultvalue), 1, 0),
+                              x8_2fts_any_value = ifelse(contaminant == "8:2 fts" & !is.na(analyticalresultvalue), 1, 0),
+                              x9cl_pf3ons_any_value = ifelse(contaminant == "9cl-pf3ons" & !is.na(analyticalresultvalue), 1, 0),
+                              adona_any_value = ifelse(contaminant == "adona" & !is.na(analyticalresultvalue), 1, 0),
+                              hfpo_da_any_value = ifelse(contaminant == "hfpo-da" & !is.na(analyticalresultvalue), 1, 0),
+                              netfosaa_any_value = ifelse(contaminant == "netfosaa" & !is.na(analyticalresultvalue), 1, 0),
+                              nfdha_any_value = ifelse(contaminant == "nfdha" & !is.na(analyticalresultvalue), 1, 0),
+                              nmefosaa_any_value = ifelse(contaminant == "nmefosaa" & !is.na(analyticalresultvalue), 1, 0),
+                              pfba_any_value = ifelse(contaminant == "pfba" & !is.na(analyticalresultvalue), 1, 0),
+                              pfbs_any_value = ifelse(contaminant == "pfbs" & !is.na(analyticalresultvalue), 1, 0),
+                              pfda_any_value = ifelse(contaminant == "pfda" & !is.na(analyticalresultvalue), 1, 0),
+                              pfdoa_any_value = ifelse(contaminant == "pfdoa" & !is.na(analyticalresultvalue), 1, 0),
+                              pfeesa_any_value = ifelse(contaminant == "pfeesa" & !is.na(analyticalresultvalue), 1, 0),
+                              pfhpa_any_value = ifelse(contaminant == "pfhpa" & !is.na(analyticalresultvalue), 1, 0),
+                              pfhps_any_value = ifelse(contaminant == "pfhps" & !is.na(analyticalresultvalue), 1, 0),
+                              pfhxa_any_value = ifelse(contaminant == "pfhxa" & !is.na(analyticalresultvalue), 1, 0),
+                              pfhxs_any_value = ifelse(contaminant == "pfhxs" & !is.na(analyticalresultvalue), 1, 0),
+                              pfmba_any_value = ifelse(contaminant == "pfmba" & !is.na(analyticalresultvalue), 1, 0),
+                              pfmpa_any_value = ifelse(contaminant == "pfmpa" & !is.na(analyticalresultvalue), 1, 0),
+                              pfna_any_value = ifelse(contaminant == "pfna" & !is.na(analyticalresultvalue), 1, 0),
+                              pfoa_any_value = ifelse(contaminant == "pfoa" & !is.na(analyticalresultvalue), 1, 0),
+                              pfos_any_value = ifelse(contaminant == "pfos" & !is.na(analyticalresultvalue), 1, 0),
+                              pfpea_any_value = ifelse(contaminant == "pfpea" & !is.na(analyticalresultvalue), 1, 0),
+                              pfpes_any_value = ifelse(contaminant == "pfpes" & !is.na(analyticalresultvalue), 1, 0),
+                              pfta_any_value = ifelse(contaminant == "pfta" & !is.na(analyticalresultvalue), 1, 0),
+                              pftrda_any_value = ifelse(contaminant == "pftrda" & !is.na(analyticalresultvalue), 1, 0),
+                              pfuna_any_value = ifelse(contaminant == "pfuna" & !is.na(analyticalresultvalue), 1, 0)
+                            ) %>% 
                             group_by(pws_id) %>% 
-                            summarise(num_sw_pfas_above_mrl = n())
+                            summarise(
+                              x11cl_pf3ouds_any_value = ifelse(sum(x11cl_pf3ouds_any_value)>0,1,0),
+                              x4_2fts_any_value = ifelse(sum(x4_2fts_any_value)>0,1,0),
+                              x6_2fts_any_value = ifelse(sum(x6_2fts_any_value)>0,1,0),
+                              x8_2fts_any_value = ifelse(sum(x8_2fts_any_value)>0,1,0),
+                              x9cl_pf3ons_any_value = ifelse(sum(x9cl_pf3ons_any_value)>0,1,0),
+                              adona_any_value = ifelse(sum(adona_any_value)>0,1,0),
+                              hfpo_da_any_value = ifelse(sum(hfpo_da_any_value)>0,1,0),
+                              netfosaa_any_value = ifelse(sum(netfosaa_any_value)>0,1,0),
+                              nfdha_any_value = ifelse(sum(nfdha_any_value)>0,1,0),
+                              nmefosaa_any_value = ifelse(sum(nmefosaa_any_value)>0,1,0),
+                              pfba_any_value = ifelse(sum(pfba_any_value)>0,1,0),
+                              pfbs_any_value = ifelse(sum(pfbs_any_value)>0,1,0),
+                              pfda_any_value = ifelse(sum(pfda_any_value)>0,1,0),
+                              pfdoa_any_value = ifelse(sum(pfdoa_any_value)>0,1,0),
+                              pfeesa_any_value = ifelse(sum(pfeesa_any_value)>0,1,0),
+                              pfhpa_any_value = ifelse(sum(pfhpa_any_value)>0,1,0),
+                              pfhps_any_value = ifelse(sum(pfhps_any_value)>0,1,0),
+                              pfhxa_any_value = ifelse(sum(pfhxa_any_value)>0,1,0),
+                              pfhxs_any_value = ifelse(sum(pfhxs_any_value)>0,1,0),
+                              pfmba_any_value = ifelse(sum(pfmba_any_value)>0,1,0),
+                              pfmpa_any_value = ifelse(sum(pfmpa_any_value)>0,1,0),
+                              pfna_any_value = ifelse(sum(pfna_any_value)>0,1,0),
+                              pfoa_any_value = ifelse(sum(pfoa_any_value)>0,1,0),
+                              pfos_any_value = ifelse(sum(pfos_any_value)>0,1,0),
+                              pfpea_any_value = ifelse(sum(pfpea_any_value)>0,1,0),
+                              pfpes_any_value = ifelse(sum(pfpes_any_value)>0,1,0),
+                              pfta_any_value = ifelse(sum(pfta_any_value)>0,1,0),
+                              pftrda_any_value = ifelse(sum(pftrda_any_value)>0,1,0),
+                              pfuna_any_value = ifelse(sum(pfuna_any_value)>0,1,0)
+                            )
                           ,
                           by = "pws_id"
-      )
-
-pa_pfas_sampling["num_sw_pfas_above_mrl"][is.na(pa_pfas_sampling["num_sw_pfas_above_mrl"])] <- 0
+                        )
 
 # which pfas chemicals over mrl?
 pa_pfas_sampling_wide <- left_join(
                             pa_pfas_sampling_wide,
                             pa_pfas_sampling %>% 
                             mutate(
-                              x11cl_pf3ouds_above_mrl = ifelse(contaminant == "11cl-pf3ouds" & analyticalresultssign == "=", 1, 0),
-                              x4_2fts_above_mrl = ifelse(contaminant == "4:2 fts" & analyticalresultssign == "=", 1, 0),
-                              x6_2fts_above_mrl = ifelse(contaminant == "6:2 fts" & analyticalresultssign == "=", 1, 0),
-                              x8_2fts_above_mrl = ifelse(contaminant == "8:2 fts" & analyticalresultssign == "=", 1, 0),
-                              x9cl_pf3ons_above_mrl = ifelse(contaminant == "9cl-pf3ons" & analyticalresultssign == "=", 1, 0),
-                              adona_above_mrl = ifelse(contaminant == "adona" & analyticalresultssign == "=", 1, 0),
-                              hfpo_da_above_mrl = ifelse(contaminant == "hfpo-da" & analyticalresultssign == "=", 1, 0),
-                              netfosaa_above_mrl = ifelse(contaminant == "netfosaa" & analyticalresultssign == "=", 1, 0),
-                              nfdha_above_mrl = ifelse(contaminant == "nfdha" & analyticalresultssign == "=", 1, 0),
-                              nmefosaa_above_mrl = ifelse(contaminant == "nmefosaa" & analyticalresultssign == "=", 1, 0),
-                              pfba_above_mrl = ifelse(contaminant == "pfba" & analyticalresultssign == "=", 1, 0),
-                              pfbs_above_mrl = ifelse(contaminant == "pfbs" & analyticalresultssign == "=", 1, 0),
-                              pfda_above_mrl = ifelse(contaminant == "pfda" & analyticalresultssign == "=", 1, 0),
-                              pfdoa_above_mrl = ifelse(contaminant == "pfdoa" & analyticalresultssign == "=", 1, 0),
-                              pfeesa_above_mrl = ifelse(contaminant == "pfeesa" & analyticalresultssign == "=", 1, 0),
-                              pfhpa_above_mrl = ifelse(contaminant == "pfhpa" & analyticalresultssign == "=", 1, 0),
-                              pfhps_above_mrl = ifelse(contaminant == "pfhps" & analyticalresultssign == "=", 1, 0),
-                              pfhxa_above_mrl = ifelse(contaminant == "pfhxa" & analyticalresultssign == "=", 1, 0),
-                              pfhxs_above_mrl = ifelse(contaminant == "pfhxs" & analyticalresultssign == "=", 1, 0),
-                              pfmba_above_mrl = ifelse(contaminant == "pfmba" & analyticalresultssign == "=", 1, 0),
-                              pfmpa_above_mrl = ifelse(contaminant == "pfmpa" & analyticalresultssign == "=", 1, 0),
-                              pfna_above_mrl = ifelse(contaminant == "pfna" & analyticalresultssign == "=", 1, 0),
-                              pfoa_above_mrl = ifelse(contaminant == "pfoa" & analyticalresultssign == "=", 1, 0),
-                              pfos_above_mrl = ifelse(contaminant == "pfos" & analyticalresultssign == "=", 1, 0),
-                              pfpea_above_mrl = ifelse(contaminant == "pfpea" & analyticalresultssign == "=", 1, 0),
-                              pfpes_above_mrl = ifelse(contaminant == "pfpes" & analyticalresultssign == "=", 1, 0),
-                              pfta_above_mrl = ifelse(contaminant == "pfta" & analyticalresultssign == "=", 1, 0),
-                              pftrda_above_mrl = ifelse(contaminant == "pftrda" & analyticalresultssign == "=", 1, 0),
-                              pfuna_above_mrl = ifelse(contaminant == "pfuna" & analyticalresultssign == "=", 1, 0)
+                              x11cl_pf3ouds_above_mrl_0_005 = ifelse(contaminant == "11cl-pf3ouds" & analyticalresultssign == "=", 1, 0),
+                              x4_2fts_above_mrl_0_003 = ifelse(contaminant == "4:2 fts" & analyticalresultssign == "=", 1, 0),
+                              x6_2fts_above_mrl_0_005 = ifelse(contaminant == "6:2 fts" & analyticalresultssign == "=", 1, 0),
+                              x8_2fts_above_mrl_0_005 = ifelse(contaminant == "8:2 fts" & analyticalresultssign == "=", 1, 0),
+                              x9cl_pf3ons_above_mrl_0_002 = ifelse(contaminant == "9cl-pf3ons" & analyticalresultssign == "=", 1, 0),
+                              adona_above_mrl_0_003 = ifelse(contaminant == "adona" & analyticalresultssign == "=", 1, 0),
+                              hfpo_da_above_mrl_0_005 = ifelse(contaminant == "hfpo-da" & analyticalresultssign == "=", 1, 0),
+                              netfosaa_above_mrl_0_005 = ifelse(contaminant == "netfosaa" & analyticalresultssign == "=", 1, 0),
+                              nfdha_above_mrl_0_020 = ifelse(contaminant == "nfdha" & analyticalresultssign == "=", 1, 0),
+                              nmefosaa_above_mrl_0_006 = ifelse(contaminant == "nmefosaa" & analyticalresultssign == "=", 1, 0),
+                              pfba_above_mrl_0_005 = ifelse(contaminant == "pfba" & analyticalresultssign == "=", 1, 0),
+                              pfbs_above_mrl_0_090 = ifelse(contaminant == "pfbs" & analyticalresultssign == "=", 1, 0),
+                              pfda_above_mrl_0_003 = ifelse(contaminant == "pfda" & analyticalresultssign == "=", 1, 0),
+                              pfdoa_above_mrl_0_003 = ifelse(contaminant == "pfdoa" & analyticalresultssign == "=", 1, 0),
+                              pfeesa_above_mrl_0_003 = ifelse(contaminant == "pfeesa" & analyticalresultssign == "=", 1, 0),
+                              pfhpa_above_mrl_0_003 = ifelse(contaminant == "pfhpa" & analyticalresultssign == "=", 1, 0),
+                              pfhps_above_mrl_0_003 = ifelse(contaminant == "pfhps" & analyticalresultssign == "=", 1, 0),
+                              pfhxa_above_mrl_0_003 = ifelse(contaminant == "pfhxa" & analyticalresultssign == "=", 1, 0),
+                              pfhxs_above_mrl_0_003 = ifelse(contaminant == "pfhxs" & analyticalresultssign == "=", 1, 0),
+                              pfmba_above_mrl_0_003 = ifelse(contaminant == "pfmba" & analyticalresultssign == "=", 1, 0),
+                              pfmpa_above_mrl_0_004 = ifelse(contaminant == "pfmpa" & analyticalresultssign == "=", 1, 0),
+                              pfna_above_mrl_0_004 = ifelse(contaminant == "pfna" & analyticalresultssign == "=", 1, 0),
+                              pfoa_above_mrl_0_004 = ifelse(contaminant == "pfoa" & analyticalresultssign == "=", 1, 0),
+                              pfos_above_mrl_0_004 = ifelse(contaminant == "pfos" & analyticalresultssign == "=", 1, 0),
+                              pfpea_above_mrl_0_003 = ifelse(contaminant == "pfpea" & analyticalresultssign == "=", 1, 0),
+                              pfpes_above_mrl_0_004 = ifelse(contaminant == "pfpes" & analyticalresultssign == "=", 1, 0),
+                              pfta_above_mrl_0_008 = ifelse(contaminant == "pfta" & analyticalresultssign == "=", 1, 0),
+                              pftrda_above_mrl_0_007 = ifelse(contaminant == "pftrda" & analyticalresultssign == "=", 1, 0),
+                              pfuna_above_mrl_0_002 = ifelse(contaminant == "pfuna" & analyticalresultssign == "=", 1, 0)
                             ) %>% 
                             group_by(pws_id) %>% 
                             summarise(
-                              x11cl_pf3ouds_above_mrl = ifelse(sum(x11cl_pf3ouds_above_mrl)>0,1,0),
-                              x4_2fts_above_mrl = ifelse(sum(x4_2fts_above_mrl)>0,1,0),
-                              x6_2fts_above_mrl = ifelse(sum(x6_2fts_above_mrl)>0,1,0),
-                              x8_2fts_above_mrl = ifelse(sum(x8_2fts_above_mrl)>0,1,0),
-                              x9cl_pf3ons_above_mrl = ifelse(sum(x9cl_pf3ons_above_mrl)>0,1,0),
-                              adona_above_mrl = ifelse(sum(adona_above_mrl)>0,1,0),
-                              hfpo_da_above_mrl = ifelse(sum(hfpo_da_above_mrl)>0,1,0),
-                              netfosaa_above_mrl = ifelse(sum(netfosaa_above_mrl)>0,1,0),
-                              nfdha_above_mrl = ifelse(sum(nfdha_above_mrl)>0,1,0),
-                              nmefosaa_above_mrl = ifelse(sum(nmefosaa_above_mrl)>0,1,0),
-                              pfba_above_mrl = ifelse(sum(pfba_above_mrl)>0,1,0),
-                              pfbs_above_mrl = ifelse(sum(pfbs_above_mrl)>0,1,0),
-                              pfda_above_mrl = ifelse(sum(pfda_above_mrl)>0,1,0),
-                              pfdoa_above_mrl = ifelse(sum(pfdoa_above_mrl)>0,1,0),
-                              pfeesa_above_mrl = ifelse(sum(pfeesa_above_mrl)>0,1,0),
-                              pfhpa_above_mrl = ifelse(sum(pfhpa_above_mrl)>0,1,0),
-                              pfhps_above_mrl = ifelse(sum(pfhps_above_mrl)>0,1,0),
-                              pfhxa_above_mrl = ifelse(sum(pfhxa_above_mrl)>0,1,0),
-                              pfhxs_above_mrl = ifelse(sum(pfhxs_above_mrl)>0,1,0),
-                              pfmba_above_mrl = ifelse(sum(pfmba_above_mrl)>0,1,0),
-                              pfmpa_above_mrl = ifelse(sum(pfmpa_above_mrl)>0,1,0),
-                              pfna_above_mrl = ifelse(sum(pfna_above_mrl)>0,1,0),
-                              pfoa_above_mrl = ifelse(sum(pfoa_above_mrl)>0,1,0),
-                              pfos_above_mrl = ifelse(sum(pfos_above_mrl)>0,1,0),
-                              pfpea_above_mrl = ifelse(sum(pfpea_above_mrl)>0,1,0),
-                              pfpes_above_mrl = ifelse(sum(pfpes_above_mrl)>0,1,0),
-                              pfta_above_mrl = ifelse(sum(pfta_above_mrl)>0,1,0),
-                              pftrda_above_mrl = ifelse(sum(pftrda_above_mrl)>0,1,0),
-                              pfuna_above_mrl = ifelse(sum(pfuna_above_mrl)>0,1,0)
+                              x11cl_pf3ouds_above_mrl_0_005 = ifelse(sum(x11cl_pf3ouds_above_mrl_0_005)>0,1,0),
+                              x4_2fts_above_mrl_0_003 = ifelse(sum(x4_2fts_above_mrl_0_003)>0,1,0),
+                              x6_2fts_above_mrl_0_005 = ifelse(sum(x6_2fts_above_mrl_0_005)>0,1,0),
+                              x8_2fts_above_mrl_0_005 = ifelse(sum(x8_2fts_above_mrl_0_005)>0,1,0),
+                              x9cl_pf3ons_above_mrl_0_002 = ifelse(sum(x9cl_pf3ons_above_mrl_0_002)>0,1,0),
+                              adona_above_mrl_0_003 = ifelse(sum(adona_above_mrl_0_003)>0,1,0),
+                              hfpo_da_above_mrl_0_005 = ifelse(sum(hfpo_da_above_mrl_0_005)>0,1,0),
+                              netfosaa_above_mrl_0_005 = ifelse(sum(netfosaa_above_mrl_0_005)>0,1,0),
+                              nfdha_above_mrl_0_020 = ifelse(sum(nfdha_above_mrl_0_020)>0,1,0),
+                              nmefosaa_above_mrl_0_006 = ifelse(sum(nmefosaa_above_mrl_0_006)>0,1,0),
+                              pfba_above_mrl_0_005 = ifelse(sum(pfba_above_mrl_0_005)>0,1,0),
+                              pfbs_above_mrl_0_090 = ifelse(sum(pfbs_above_mrl_0_090)>0,1,0),
+                              pfda_above_mrl_0_003 = ifelse(sum(pfda_above_mrl_0_003)>0,1,0),
+                              pfdoa_above_mrl_0_003 = ifelse(sum(pfdoa_above_mrl_0_003)>0,1,0),
+                              pfeesa_above_mrl_0_003 = ifelse(sum(pfeesa_above_mrl_0_003)>0,1,0),
+                              pfhpa_above_mrl_0_003 = ifelse(sum(pfhpa_above_mrl_0_003)>0,1,0),
+                              pfhps_above_mrl_0_003 = ifelse(sum(pfhps_above_mrl_0_003)>0,1,0),
+                              pfhxa_above_mrl_0_003 = ifelse(sum(pfhxa_above_mrl_0_003)>0,1,0),
+                              pfhxs_above_mrl_0_003 = ifelse(sum(pfhxs_above_mrl_0_003)>0,1,0),
+                              pfmba_above_mrl_0_003 = ifelse(sum(pfmba_above_mrl_0_003)>0,1,0),
+                              pfmpa_above_mrl_0_004 = ifelse(sum(pfmpa_above_mrl_0_004)>0,1,0),
+                              pfna_above_mrl_0_004 = ifelse(sum(pfna_above_mrl_0_004)>0,1,0),
+                              pfoa_above_mrl_0_004 = ifelse(sum(pfoa_above_mrl_0_004)>0,1,0),
+                              pfos_above_mrl_0_004 = ifelse(sum(pfos_above_mrl_0_004)>0,1,0),
+                              pfpea_above_mrl_0_003 = ifelse(sum(pfpea_above_mrl_0_003)>0,1,0),
+                              pfpes_above_mrl_0_004 = ifelse(sum(pfpes_above_mrl_0_004)>0,1,0),
+                              pfta_above_mrl_0_008 = ifelse(sum(pfta_above_mrl_0_008)>0,1,0),
+                              pftrda_above_mrl_0_007 = ifelse(sum(pftrda_above_mrl_0_007)>0,1,0),
+                              pfuna_above_mrl_0_002 = ifelse(sum(pfuna_above_mrl_0_002)>0,1,0)
                             )
                           ,
                           by = "pws_id"
@@ -1031,14 +1147,15 @@ pa_pfas_sampling_wide <- left_join(
 #                           by = "pws_id"
 #                         )
 
-pa_pfas_sampling_wide <- pa_pfas_sampling_wide %>% 
-                            mutate(
-                              pfas_sum_values_above_mrl_highest_detected = pmax(pfas_sum_values_above_mrl_1,pfas_sum_values_above_mrl_2,pfas_sum_values_above_mrl_3, na.rm = TRUE),
-                              pfas_sum_values_above_mrl_lowest_detected = pmin(pfas_sum_values_above_mrl_1,pfas_sum_values_above_mrl_2,pfas_sum_values_above_mrl_3, na.rm = TRUE)
-                            )
+# pa_pfas_sampling_wide <- pa_pfas_sampling_wide %>% 
+#                             mutate(
+#                               pfas_sum_values_above_mrl_highest_detected = pmax(pfas_sum_values_above_mrl_1,pfas_sum_values_above_mrl_2,pfas_sum_values_above_mrl_3, na.rm = TRUE),
+#                               pfas_sum_values_above_mrl_lowest_detected = pmin(pfas_sum_values_above_mrl_1,pfas_sum_values_above_mrl_2,pfas_sum_values_above_mrl_3, na.rm = TRUE)
+#                             )
 
 # of times detected over mrl by chemical?
 num_samples_by_chem <- left_join(
+                        left_join(
                           pa_pfas_sampling %>% 
                           count(pws_id, contaminant, name = "num_samples_by_chem")
                         ,
@@ -1047,30 +1164,48 @@ num_samples_by_chem <- left_join(
                           count(pws_id, contaminant, name = "num_samples_by_chem_above_mrl")
                         ,
                         by = c("pws_id","contaminant")
-)
+                        ),
+                        pa_pfas_sampling %>% 
+                          filter(!is.na(analyticalresultvalue)) %>% 
+                          count(pws_id, contaminant, name = "num_samples_by_chem_any_value")
+                        ,
+                        by = c("pws_id","contaminant")                        
+                  )
 
 pa_pfas_sampling_wide <- left_join(
                           pa_pfas_sampling_wide,
                           left_join(
+                            left_join(
+                              num_samples_by_chem %>%
+                                pivot_wider(
+                                  id_cols = c(pws_id),
+                                  names_from = contaminant,
+                                  names_glue = "{contaminant}_num_samples",
+                                  values_from = num_samples_by_chem
+                                ) %>% 
+                                clean_names()
+                              ,
+                              num_samples_by_chem %>%
+                                pivot_wider(
+                                  id_cols = c(pws_id),
+                                  names_from = contaminant,
+                                  names_glue = "{contaminant}_num_samples_above_mrl",
+                                  values_from = num_samples_by_chem_above_mrl
+                                ) %>% 
+                                clean_names()
+                                ,
+                                by = "pws_id"
+                            ),
                             num_samples_by_chem %>%
                               pivot_wider(
                                 id_cols = c(pws_id),
                                 names_from = contaminant,
-                                names_glue = "{contaminant}_num_samples",
-                                values_from = num_samples_by_chem
-                              ) %>% 
-                              clean_names()
-                            ,
-                            num_samples_by_chem %>%
-                              pivot_wider(
-                                id_cols = c(pws_id),
-                                names_from = contaminant,
-                                names_glue = "{contaminant}_num_samples_above_mrl",
+                                names_glue = "{contaminant}_num_samples_any_value",
                                 values_from = num_samples_by_chem_above_mrl
                               ) %>% 
                               clean_names()
-                              ,
-                              by = "pws_id"
+                            ,
+                            by = "pws_id"
                           )
                           ,
                           by = "pws_id"
@@ -1083,120 +1218,18 @@ pa_pfas_sampling_wide <- left_join(
 
 pa_pfas_sampling_wide[is.na(pa_pfas_sampling_wide)] <- 0
 
-#UCMR values and MRL are in micrograms/liter while PA DEP is in nanograms/liter
-#converting DEP values to match UCMR units
-
-pa_pfas_sampling$analyticalresultvalue <- ifelse(
-  pa_pfas_sampling$data_source == "DEP",
-  as.numeric(ifelse(is.na(pa_pfas_sampling$analyticalresultvalue), NA, pa_pfas_sampling$analyticalresultvalue))/1000,
-  as.numeric(ifelse(is.na(pa_pfas_sampling$analyticalresultvalue), NA, pa_pfas_sampling$analyticalresultvalue))
-)
-
-
-#summary pfas detected variable
-
-pa_pfas_sampling <- pa_pfas_sampling %>% 
-                      mutate(
-                        mrl = case_when(
-                          contaminant == 'pfbs' ~ 0.090,
-                          contaminant == 'pfhpa' ~ 0.010,
-                          contaminant == 'pfhxs' ~ 0.030,
-                          contaminant == 'pfna' ~ 0.020,
-                          contaminant == 'pfos' ~ 0.040,
-                          contaminant == 'pfoa' ~ 0.020,
-                          contaminant == 'pfoa' ~ 0.004,
-                          contaminant == 'pfos' ~ 0.004,
-                          contaminant == 'pfba' ~ 0.005,
-                          contaminant == '6:2 fts' ~ 0.005,
-                          contaminant == '9cl-pf3ons' ~ 0.002,
-                          contaminant == '11cl-pf3ouds' ~ 0.005,
-                          contaminant == 'pfna' ~ 0.004,
-                          contaminant == 'pfbs' ~ 0.003,
-                          contaminant == 'pfhxs' ~ 0.003,
-                          contaminant == 'pfhxa' ~ 0.003,
-                          contaminant == '8:2 fts' ~ 0.005,
-                          contaminant == 'pfmpa' ~ 0.004,
-                          contaminant == 'pfpea' ~ 0.003,
-                          contaminant == 'hfpo-da' ~ 0.005,
-                          contaminant == '4:2 fts' ~ 0.003,
-                          contaminant == 'pfhps' ~ 0.003,
-                          contaminant == 'pfda' ~ 0.003,
-                          contaminant == 'pfuna' ~ 0.002,
-                          contaminant == 'pfpes' ~ 0.004,
-                          contaminant == 'adona' ~ 0.003,
-                          contaminant == 'pfdoa' ~ 0.003,
-                          contaminant == 'pfeesa' ~ 0.003,
-                          contaminant == 'nfdha' ~ 0.020,
-                          contaminant == 'pfhpa' ~ 0.003,
-                          contaminant == 'pfmba' ~ 0.003,
-                          contaminant == 'nmefosaa' ~ 0.006,
-                          contaminant == 'pfta' ~ 0.008,
-                          contaminant == 'pftrda' ~ 0.007,
-                          contaminant == 'netfosaa' ~ 0.005
-                        ),
-                        pfas_detected_source = case_when(
-                          (data_source == "DEP" & (analyticalresultvalue == 0)) ~ "DEP: Not detected",
-                          (data_source == "DEP" & (analyticalresultvalue > 0)) ~ "DEP: Detected",
-                          (data_source == "UCMR" & (analyticalresultssign == "<")) ~ "UCMR: Detected below MRL",
-                          (data_source == "UCMR" & (analyticalresultssign == "=")) ~ "UCMR: Detected at or above MRL"
-                        ),
-                        pfas_detected = case_when(
-                          (data_source == "DEP" & (analyticalresultvalue == 0)) ~ "Not detected",
-                          (data_source == "UCMR" & (analyticalresultssign == "<")) ~ "Detected at 0 or less than MRL",
-                          (data_source == "DEP" & ((analyticalresultvalue > 0) & (analyticalresultvalue < mrl))) ~ "Detected above 0 but below MRL",
-                          (data_source == "UCMR" & (analyticalresultssign == "=")) | (data_source == "DEP" & (analyticalresultvalue > mrl)) ~ "Detected at or above MRL"
-                        )
-                      )
-
-pa_pfas_sampling_wide <- left_join(
-                          pa_pfas_sampling_wide,
-                          pa_pfas_sampling %>% 
-                            group_by(pws_id) %>% 
-                            mutate(pfas_detected_above_mrl = as.integer("Detected at or above MRL" %in% pfas_detected),
-                                   pfas_detected_above_0 = as.integer("Detected above 0 but below MRL" %in% pfas_detected),
-                                   pfas_detected_below_mrl = as.integer("Detected at 0 or less than MRL" %in% pfas_detected),
-                                   pfas_not_detected = as.integer("Not detected" %in% pfas_detected),
-                                   pfas_detected_4cat = 
-                                                         ifelse(
-                                                           pfas_detected_above_mrl == 1,
-                                                           "PFAS detected at or above MRL",
-                                                           ifelse(
-                                                             pfas_detected_above_0 == 1,
-                                                             "PFAS detected above 0 but below MRL",
-                                                             ifelse(
-                                                               pfas_detected_below_mrl == 1,
-                                                               "PFAS detected at 0 or less than MRL",
-                                                               "PFAS not detected"
-                                                             )
-                                                           )
-                                                       )
-                                   ) %>% 
-                              distinct(pws_id, pfas_detected_4cat),
-                          by = "pws_id"
-)
-
-table(pa_pfas_sampling_wide$pfas_detected_4cat)
-
-
-
-
-
-
-
-
-
 # change in detected pfas over time by chemical (e.g., went from over mrl to below mrl)
 
 ## first widen the data with all sample results for each date for each chemical
-temp_wide <- ucmr5_long %>%
-              pivot_wider(
-                id_cols = c(pws_id),
-                names_from = c(contaminant,date),
-                names_glue = "{contaminant}_{date}",
-                values_from = analyticalresultssign
-              ) %>% 
-              clean_names()
-          
+# temp_wide <- ucmr5_long %>%
+#               pivot_wider(
+#                 id_cols = c(pws_id),
+#                 names_from = c(contaminant,date),
+#                 names_glue = "{contaminant}_{date}",
+#                 values_from = analyticalresultssign
+#               ) %>% 
+#               clean_names()
+#           
 
 ## identify temporal pattern for each PWS and chemical
 
@@ -1209,40 +1242,40 @@ temp_wide <- ucmr5_long %>%
 ### 000 (no change) 010 (non-linear) 011 (positive) 001 (positive)
 ### 0NN (no longitudinal sample) 00N 
 
-mrl_time <- function(x){
-  temp_wide <- temp_wide %>% 
-    mutate(
-      !!paste0(x, "_time") := 
-        str_c(
-          ifelse(grepl("=", !!sym(paste0(x, "_1"))) == TRUE, 1, 0),
-          ifelse(grepl("=", !!sym(paste0(x, "_2"))) == TRUE, 1, 0),
-          ifelse(grepl("=", !!sym(paste0(x, "_3"))) == TRUE, 1, 0),
-          sep = ""
-        )
-      )
-  return(temp_wide)
-}
-
-time_status <- function(x){
-  temp_wide <- temp_wide %>% 
-    mutate(
-      !!paste0(x, "_time_change") := 
-        case_when(
-          get(!!paste0(x, "_time")) %in% c("100", "110") ~ "Negative",
-          get(!!paste0(x, "_time")) %in% c("011", "001") ~ "Positive",      
-          get(!!paste0(x, "_time")) %in% c("111", "000") ~ "No change",      
-          get(!!paste0(x, "_time")) %in% c("101", "010") ~ "Non-linear"
-        )
-    )
-  return(temp_wide)
-}
-
-pfas_chems <- c("x11cl_pf3ouds","x4_2_fts","x6_2_fts","x8_2_fts","x9cl_pf3ons","adona","hfpo_da","nfdha","pfba","pfbs","pfda","pfdoa","pfeesa","pfhpa","pfhps","pfhxa","pfhxs","pfmba","pfmpa","pfna","pfoa","pfos","pfpea","pfpes","pfuna")
-
-for (i in pfas_chems) {
-  temp_wide <- mrl_time(i)
-  temp_wide <- time_status(i)
-}
+# mrl_time <- function(x){
+#   temp_wide <- temp_wide %>% 
+#     mutate(
+#       !!paste0(x, "_time") := 
+#         str_c(
+#           ifelse(grepl("=", !!sym(paste0(x, "_1"))) == TRUE, 1, 0),
+#           ifelse(grepl("=", !!sym(paste0(x, "_2"))) == TRUE, 1, 0),
+#           ifelse(grepl("=", !!sym(paste0(x, "_3"))) == TRUE, 1, 0),
+#           sep = ""
+#         )
+#       )
+#   return(temp_wide)
+# }
+# 
+# time_status <- function(x){
+#   temp_wide <- temp_wide %>% 
+#     mutate(
+#       !!paste0(x, "_time_change") := 
+#         case_when(
+#           get(!!paste0(x, "_time")) %in% c("100", "110") ~ "Negative",
+#           get(!!paste0(x, "_time")) %in% c("011", "001") ~ "Positive",      
+#           get(!!paste0(x, "_time")) %in% c("111", "000") ~ "No change",      
+#           get(!!paste0(x, "_time")) %in% c("101", "010") ~ "Non-linear"
+#         )
+#     )
+#   return(temp_wide)
+# }
+# 
+# pfas_chems <- c("x11cl_pf3ouds","x4_2_fts","x6_2_fts","x8_2_fts","x9cl_pf3ons","adona","hfpo_da","nfdha","pfba","pfbs","pfda","pfdoa","pfeesa","pfhpa","pfhps","pfhxa","pfhxs","pfmba","pfmpa","pfna","pfoa","pfos","pfpea","pfpes","pfuna")
+# 
+# for (i in pfas_chems) {
+#   temp_wide <- mrl_time(i)
+#   temp_wide <- time_status(i)
+# }
 
 ### NOTE: The tests on different dates are not necessarily sampled from the same location.
 ### What the final variable shows is whether or not there was a change over time in the PWS in general.
@@ -1252,171 +1285,254 @@ for (i in pfas_chems) {
 ### in the PWS is decreasing, but it is possible the second well was never contaminated.
 ### Also, some samples were taken within days of each other at different sites.
 
-ucmr5_wide <- left_join(ucmr5_wide, temp_wide, by = "pws_id")
 
 
 
 
 
+# 4. output files for rti ----
 
+pa_pfas_sampling_wide_rti <- pa_pfas_sampling_wide %>% 
+                                dplyr::select(pws_id, starts_with("num"), any_contaminants_above_mrl, pfas_detected_4cat, starts_with("pfos"), starts_with("pfoa"), starts_with("pfna"), starts_with("pfhxs"), starts_with("pfhpa"), starts_with("pfbs"))
 
+pa_pfas_sampling_rti <- pa_pfas_sampling %>% 
+                          filter(contaminant %in% c("pfos","pfoa","pfna","pfhxs","pfhpa","pfbs"))
 
+write_csv(pa_pfas_sampling_wide_rti, file = "00_data/pa_pfas_sampling_wide_rti.csv")
+write_csv(pa_pfas_sampling_rti, file = "00_data/pa_pfas_sampling_rti.csv")
 
-    summarise(
-      x11cl_pf3ouds_num_above_mrl = tally(pws_id,contaminant),
-      x4_2fts_num_above_mrl = tally(pws_id,contaminant),
-      x6_2fts_num_above_mrl = tally(pws_id,contaminant),
-      x8_2fts_num_above_mrl = tally(pws_id,contaminant),
-      x9cl_pf3ons_num_above_mrl = tally(pws_id,contaminant),
-      adona_num_above_mrl = tally(pws_id,contaminant),
-      hfpo_da_num_above_mrl = tally(pws_id,contaminant),
-      netfosaa_num_above_mrl = tally(pws_id,contaminant),
-      nfdha_num_above_mrl = tally(pws_id,contaminant),
-      nmefosaa_num_above_mrl = tally(pws_id,contaminant),
-      pfba_num_above_mrl = tally(pws_id,contaminant),
-      pfbs_num_above_mrl = tally(pws_id,contaminant),
-      pfda_num_above_mrl = tally(pws_id,contaminant),
-      pfdoa_num_above_mrl = tally(pws_id,contaminant),
-      pfeesa_num_above_mrl = tally(pws_id,contaminant),
-      pfhpa_num_above_mrl = tally(pws_id,contaminant),
-      pfhps_num_above_mrl = tally(pws_id,contaminant),
-      pfhxa_num_above_mrl = tally(pws_id,contaminant),
-      pfhxs_num_above_mrl = tally(pws_id,contaminant),
-      pfmba_num_above_mrl = tally(pws_id,contaminant),
-      pfmpa_num_above_mrl = tally(pws_id,contaminant),
-      pfna_num_above_mrl = tally(pws_id,contaminant),
-      pfoa_num_above_mrl = tally(pws_id,contaminant),
-      pfos_num_above_mrl = tally(pws_id,contaminant),
-      pfpea_num_above_mrl = tally(pws_id,contaminant),
-      pfpes_num_above_mrl = tally(pws_id,contaminant),
-      pfta_num_above_mrl = tally(pws_id,contaminant),
-      pftrda_num_above_mrl = tally(pws_id,contaminant),
-      pfuna_num_above_mrl = tally(pws_id,contaminant)
-    )
-#   ,
-#   by = "pws_id"
-# )
-
-
-
-
-
-
-x11cl_pf3ouds
-x4_2fts
-x6_2fts
-x8_2fts
-x9cl_pf3ons
-adona
-hfpo_da
-netfosaa
-nfdha
-nmefosaa
-pfba
-pfbs
-pfda
-pfdoa
-pfeesa
-pfhpa
-pfhps
-pfhxa
-pfhxs
-pfmba
-pfmpa
-pfna
-pfoa
-pfos
-pfpea
-pfpes
-pfta
-pftrda
-pfuna
+pws_pfastested <- merge(
+                    x = pa_pfas_sampling_wide,
+                    y = pws %>% 
+                      dplyr::select(PWS_ID, NAME,CNTY_NAME, GW_SOURCE, SW_SOURCE, INTCONNECT, OWNERSHIP),
+                    by.x = "pws_id",
+                    by.y = "PWS_ID",
+                    keep.x = TRUE
+                  )
   
-
-ds <- ucmr5_long[ucmr5_long$pws_id == "1090063",]
-
-
-# add samples to all ids to make a id file
+st_write(pws_pfastested, dsn = "00_data/pws_pfastested.shp")
 
 
-# add date numbers
-ucmr5_long_id_test <- left_join(
-  ucmr5_long,
-  ucmr5_long %>% 
-    arrange(pws_id, collectiondate) %>%
-    distinct(pws_id, collectiondate) %>%
-    group_by(pws_id) %>% 
-    mutate(date = row_number())
-  ,
-  by = c("pws_id","collectiondate")
+# 5. calculate pws site density ----
+
+# how many data points per PWS - adding half-mile buffer (804.672)
+
+## known pfas
+# superfund
+intersection <- st_intersection(st_buffer(st_as_sf(pws_pfastested), 804.672), superfund_merge)
+
+superfund_count <- intersection %>%
+                      filter(!is_empty(.)) %>%
+                      group_by(pws_id) %>%
+                      summarise(count_superfund = n()) %>% 
+                      st_drop_geometry()
+
+# hsca
+intersection <- st_intersection(st_buffer(st_as_sf(pws_pfastested), 804.672), non_superfund)
+
+hsca_count <- intersection %>%
+                filter(!is_empty(.)) %>%
+                group_by(pws_id) %>%
+                summarise(count_hsca = n()) %>% 
+                st_drop_geometry()
+
+# discharge sites 
+intersection <- st_intersection(st_buffer(st_as_sf(pws_pfastested), 804.672), facilities_discharge_pfas)
+
+discharge_count <- intersection %>%
+                    filter(!is_empty(.)) %>%
+                    group_by(pws_id) %>%
+                    summarise(count_discharge = n()) %>% 
+                    st_drop_geometry()
+
+# ridge run
+intersection <- st_intersection(st_buffer(st_as_sf(pws_pfastested), 804.672), ridge_run)
+
+ridge_run_count <- intersection %>%
+                    filter(!is_empty(.)) %>%
+                    group_by(pws_id) %>%
+                    summarise(count_ridge_run = n()) %>% 
+                    st_drop_geometry()
+
+# neshaminy creek
+intersection <- st_intersection(st_buffer(st_as_sf(pws_pfastested), 804.672), neshaminy_creek)
+
+neshaminy_creek_count <- intersection %>%
+                          filter(!is_empty(.)) %>%
+                          group_by(pws_id) %>%
+                          summarise(count_neshaminy_creek = n()) %>% 
+                          st_drop_geometry()
+
+# combine suspected pfas counts
+known_pfas_count <- list(dplyr::select(pws_pfastested, pws_id), 
+                        superfund_count, hsca_count, discharge_count, ridge_run_count, neshaminy_creek_count) %>% 
+                    reduce(full_join, by='pws_id') %>% 
+                    replace(is.na(.), 0) %>% 
+                    mutate(count_known_pfas = (count_superfund + count_hsca + count_discharge + count_neshaminy_creek + count_ridge_run))
+
+
+
+## suspected pfas
+# airports
+intersection <- st_intersection(st_buffer(st_as_sf(pws_pfastested), 804.672), airports)
+
+airport_count <- intersection %>%
+                    filter(!is_empty(.)) %>%
+                    group_by(pws_id) %>%
+                    summarise(count_airports = n()) %>% 
+                    st_drop_geometry()
+
+# landfills
+intersection <- st_intersection(st_buffer(st_as_sf(pws_pfastested), 804.672), landfill_studyarea)
+
+landfill_count <- intersection %>%
+  filter(!is_empty(.)) %>%
+  group_by(pws_id) %>%
+  summarise(count_landfills = n()) %>% 
+  st_drop_geometry()
+
+# firefighter training
+intersection <- st_intersection(st_buffer(st_as_sf(pws_pfastested), 804.672), Fire_Training_Facilities)
+
+firefighter_count <- intersection %>%
+                      filter(!is_empty(.)) %>%
+                      group_by(pws_id) %>%
+                      summarise(count_firefighters = n()) %>% 
+                      st_drop_geometry()
+
+# manufacturing
+intersection <- st_intersection(st_buffer(st_as_sf(pws_pfastested), 804.672), manufacturing)
+
+manufacturing_count <- intersection %>%
+                        filter(!is_empty(.)) %>%
+                        group_by(pws_id) %>%
+                        summarise(count_manufacturing = n()) %>% 
+                        st_drop_geometry()
+
+# combine suspected pfas counts
+susp_pfas_count <- list(dplyr::select(pws_pfastested, pws_id), 
+                        airport_count, landfill_count, firefighter_count, manufacturing_count) %>% 
+                   reduce(full_join, by='pws_id') %>% 
+                   replace(is.na(.), 0) %>% 
+                   mutate(count_susp_pfas = (count_airports + count_landfills + count_firefighters + count_manufacturing))
+
+
+## how many wells/intakes per PWS
+
+# wells 
+intersection <- st_intersection(st_buffer(st_as_sf(pws_pfastested), 804.672), wells)
+
+wells_count <- intersection %>%
+                filter(!is_empty(.)) %>%
+                group_by(pws_id) %>%
+                summarise(count_wells = n()) %>% 
+                st_drop_geometry()
+
+# intakes 
+intersection <- st_intersection(st_buffer(st_as_sf(pws_pfastested), 804.672), intakes)
+
+intakes_count <- intersection %>%
+                  filter(!is_empty(.)) %>%
+                  group_by(pws_id) %>%
+                  summarise(count_intakes = n()) %>% 
+                  st_drop_geometry()
+
+# combine well/intake counts
+wells_intakes_count <- list(dplyr::select(pws_pfastested, pws_id), 
+                            wells_count, intakes_count) %>% 
+                        reduce(full_join, by='pws_id') %>% 
+                        replace(is.na(.), 0) %>% 
+                        mutate(count_wells_intakes = (count_wells + count_intakes))
+
+
+# combine all pws count data frames
+pws_counts <- list(dplyr::select(pws_pfastested, pws_id), 
+                   known_pfas_count, susp_pfas_count, wells_intakes_count) %>% 
+                reduce(full_join, by='pws_id') %>% 
+                replace(is.na(.), 0) %>% 
+                mutate(count_known_susp_pfas = (count_known_pfas + count_susp_pfas))
+
+write_csv(pws_counts, file = "00_data/pws_counts.csv")
+
+
+
+
+# Create a .zip archive with one or more files
+zip(zipfile = "00_data/pfas_data_geo.zip", 
+    files = c(
+      # study area
+      "00_data/study_counties.shp",
+      "00_data/study_counties.dbf",
+      "00_data/study_counties.prj",
+      "00_data/study_counties.shx",
+      # excel of known pfas w notes
+      "00_data/PFAS_detected_superfund_others.xlsx",
+      # known pfas
+      "00_data/known_pfas_superfund_sites.shp",
+      "00_data/known_pfas_hsca_sites.shp",
+      "00_data/known_pfas_neshaminy_creek_watershed.shp",
+      "00_data/known_pfas_ridge_run.shp",
+      "00_data/known_pfas_discharge.shp",
+      "00_data/known_pfas_superfund_sites.dbf",
+      "00_data/known_pfas_hsca_sites.dbf",
+      "00_data/known_pfas_neshaminy_creek_watershed.dbf",
+      "00_data/known_pfas_ridge_run.dbf",
+      "00_data/known_pfas_discharge.dbf",
+      "00_data/known_pfas_superfund_sites.prj",
+      "00_data/known_pfas_hsca_sites.prj",
+      "00_data/known_pfas_neshaminy_creek_watershed.prj",
+      "00_data/known_pfas_ridge_run.prj",
+      "00_data/known_pfas_discharge.prj",
+      "00_data/known_pfas_superfund_sites.shx",
+      "00_data/known_pfas_hsca_sites.shx",
+      "00_data/known_pfas_neshaminy_creek_watershed.shx",
+      "00_data/known_pfas_ridge_run.shx",
+      "00_data/known_pfas_discharge.shx",
+      # suspected pfas
+      "00_data/susp_pfas_manufacturing.shp",
+      "00_data/susp_pfas_landfills.shp",
+      "00_data/susp_pfas_firefighter_training.shp",
+      "00_data/susp_pfas_airports.shp",
+      "00_data/susp_pfas_manufacturing.shx",
+      "00_data/susp_pfas_landfills.shx",
+      "00_data/susp_pfas_firefighter_training.shx",
+      "00_data/susp_pfas_airports.shx",
+      "00_data/susp_pfas_manufacturing.prj",
+      "00_data/susp_pfas_landfills.prj",
+      "00_data/susp_pfas_firefighter_training.prj",
+      "00_data/susp_pfas_airports.prj",
+      "00_data/susp_pfas_manufacturing.dbf",
+      "00_data/susp_pfas_landfills.dbf",
+      "00_data/susp_pfas_firefighter_training.dbf",
+      "00_data/susp_pfas_airports.dbf",
+      # wells targeted by state
+      "00_data/wells.shp",
+      "00_data/wells.prj",
+      "00_data/wells.dbf",
+      "00_data/wells.shx",
+      # intakes targeted by state
+      "00_data/intakes.shp",
+      "00_data/intakes.shx",
+      "00_data/intakes.dbf",
+      "00_data/intakes.prj",
+      # pws wide file w aggregate data 
+      "00_data/pa_pfas_sampling_wide.csv",
+      # pws long file observation for each sample
+      "00_data/pa_pfas_sampling.csv",
+      # pws shapefiles only
+      "00_data/pws.shp",
+      "00_data/pws.dbf",
+      "00_data/pws.prj",
+      "00_data/pws.shx",
+      # pws shapefiles merged with aggregate wide data
+      "00_data/pws_pfastested.shp",
+      "00_data/pws_pfastested.prj",
+      "00_data/pws_pfastested.dbf",
+      "00_data/pws_pfastested.shx"
+    )
 )
 
 
-ucmr5_long_id_test <- ucmr5_long %>% 
-  arrange(pws_id, contaminant, collectiondate) %>%
-  group_by(pws_id, contaminant) %>%
-  mutate(date = row_number()) %>%
-  ungroup()
-
-view(ucmr5_long_id_test[ucmr5_long_id_test$pws_id == "1090026",])
-
-view(ucmr5_long_id_test[ucmr5_long_id_test$pws_id == "3060029",])
-
-
-ucmr5_long_id1 <- ucmr5_long %>% 
-                    distinct(pws_id, contaminant, collectiondate) %>% 
-                    arrange(pws_id, collectiondate) %>%
-                    group_by(pws_id) %>%
-                    mutate(date = row_number()) %>%
-                    ungroup()
-
-ucmr5_long_id2 <- ucmr5_long %>% 
-                    distinct(pws_id, contaminant, collectiondate, sampleid) %>% 
-                    arrange(pws_id, contaminant, collectiondate, sampleid) %>%
-                    group_by(pws_id, contaminant, collectiondate) %>%
-                    mutate(site = row_number()) %>%
-                    ungroup()
-
-ucmr5_long_test <- left_join(ucmr5_long, 
-                             dplyr::select(
-                               ucmr5_long_id1,
-                               pws_id,
-                               contaminant,
-                               collectiondate,
-                               date
-                               ), by = c("pws_id","contaminant","collectiondate")
-                    )
-
-view(ucmr5_long_test[ucmr5_long_test$pws_id == "1090026",])
-
-view(ucmr5_long_test[ucmr5_long_test$pws_id == "3060029",])
-
-
-ucmr5_wide1 <- ucmr5_long %>%
-  pivot_wider(
-    id_cols = c(pws_id, collectiondate,sampleid),
-    names_from = c(contaminant,sampleid,facilitywatertype),
-    names_glue = "{contaminant}_{sampleid}_{facilitywatertype}_mrl",
-    names_vary = "fastest",
-    values_from = mrl
-  ) %>% 
-  clean_names()
-
-
-view(ucmr5_long_id2[ucmr5_long_id2$pws_id == "3060029",])
-
-view(ucmr5_wide1[ucmr5_wide1$pws_id == "1150108",])
-
-facility_water_type
-glimpse(ucmr5_long)
-  
-ucmr5_long %>%
-  dplyr::group_by(PWS_ID, CollectionDate, Contaminant,  SampleID, FacilityWaterType) %>%
-  dplyr::summarise(n = dplyr::n(), .groups = "drop") %>%
-  dplyr::filter(n > 1L)
-
-
-                      c("PWS_ID","CollectionDate","Contaminant","SamplePointID","FacilityWaterType","MRL", "AnalyticalResultsSign", "AnalyticalResultValue")])
 
 
 
@@ -1425,18 +1541,9 @@ ucmr5_long %>%
 
 
 
+# 6. descriptive statistics ----
 
-
-
-
-
-
-
-# descriptives ----
-
-
-unique(pa_pfas_sampling_ucmr3dep$pws_id)
-
+# unique(pa_pfas_sampling_ucmr3dep$pws_id)
 # +12 pws
 
 pfas_sum <- pa_pfas_sampling_wide[,c("num_samples",
@@ -1457,10 +1564,7 @@ pfas_sum_ds <-rownames_to_column(pfas_sum_ds, "variable")
 
 write_csv(pfas_sum_ds, file = "00_data/pfas_sum_ds.csv")
 
-
 prop.table(table(pa_pfas_sampling_wide$pfas_detected_4cat))
-
-
 
 sum(ifelse(pa_pfas_sampling_wide$x11cl_pf3ouds_num_samples>0,1,0))
 sum(ifelse(pa_pfas_sampling_wide$x11cl_pf3ouds_above_mrl>0,1,0))
@@ -1479,27 +1583,13 @@ colnames(contam_descrip) <- c("contaminant","num_pws_sampledchem","num_pws_chem_
 write_csv(contam_descrip, file = "00_data/contam_descrip.csv")
 
 
-wells <- st_read("00_data/PAGWIS_Water_Wells_All.shp")
-
-
-
-
-
-
-
-
-
-
-
-
-# maps ----
+# 7. maps ----
 
 # attaching geometry to wide file
 
 pfas_pws_wide <- merge(x = pa_pfas_sampling_wide, y = pws.shp, by.x = "pws_id", by.y = "PWS_ID", keep.x = TRUE)
 
-
-## pws with and without sampling data ----
+## 7.1 pws with and without sampling data ----
 
 ggplot() +
   geom_sf(data = study_counties, fill = "grey97", color = "black", linewidth = 0.6) +
@@ -1539,12 +1629,7 @@ ggplot() +
 
 ggsave("02_output/pws_w_samplingdata.png", height = 6, width = 7.2, units = "in")
 
-
-
-
-
-
-## pfas detected sites ----
+## 7.2 pfas detected sites ----
 
 ggplot() +
   geom_sf(data = study_counties, fill = "grey97", color = "black", linewidth = 0.6) +
@@ -1616,8 +1701,7 @@ ggplot() +
 
 ggsave("02_output/PFAS_sites.png", height = 6, width = 7, units = "in")
 
-
-## pfas sites with pws ----
+## 7.3 pfas sites with pws ----
 
 ggplot() +
   geom_sf(data = study_counties, fill = "grey97", color = "black", linewidth = 0.6) +
@@ -1689,7 +1773,7 @@ ggplot() +
 
 ggsave("02_output/PFAS_sites_pws.png", height = 6, width = 7, units = "in")
 
-## pfas sites with pws pfas over mrl ----
+## 7.4 pfas sites with pws pfas over mrl ----
 
 ggplot() +
   geom_sf(data = study_counties, fill = "grey97", color = "black", linewidth = 0.6) +
@@ -1761,10 +1845,7 @@ ggplot() +
 
 ggsave("02_output/PFAS_sites_pws_pfas_over_mrl.png", height = 7, width = 8, units = "in")
 
-
-
-
-## pws pfas detected 4cat ----
+## 7.5 pws pfas detected 4cat ----
 
 ggplot() +
   geom_sf(data = study_counties, fill = "grey97", color = "black", linewidth = 0.6) +
@@ -1817,11 +1898,7 @@ ggplot() +
 
 ggsave("02_output/PFAS_detected_pws.png", height = 4, width = 6.79, units = "in")
 
-
-
-
-
-## pws pfas detected 4cat w PFAS detected sites ----
+## 7.6 pws pfas detected 4cat w PFAS detected sites ----
 
 ggplot() +
   geom_sf(data = study_counties, fill = "grey97", color = "black", linewidth = 0.6) +
@@ -1874,10 +1951,7 @@ ggplot() +
 
 ggsave("02_output/PFAS_detected_pws.png", height = 4, width = 6.79, units = "in")
 
-
-
-
-## pws x number of samples ----
+## 7.7 pws x number of samples ----
 
 pfas_pws_wide$num_samples.q <- cut(pfas_pws_wide$num_samples, quantile(pfas_pws_wide$num_samples, probs = c(0,.25,.5,.75,1)), label = FALSE, include.lowest = TRUE)
 
@@ -1920,10 +1994,7 @@ ggplot() +
 
 ggsave("02_output/pws_num_samples.png", height = 5.15, width = 6.68, units = "in")
 
-
-
-
-## pws x number of detected contaminants ----
+## 7.8 pws x number of detected contaminants ----
 
 pfas_pws_wide$num_contaminants_above_mrl.q <- cut(pfas_pws_wide$num_contaminants_above_mrl, c(0,1,2,3,+Inf), label = FALSE) #, include.lowest = TRUE)
 
@@ -1968,10 +2039,9 @@ ggplot() +
 
 ggsave("02_output/pws_num_contaminants.png", height = 5.1, width = 6.85, units = "in")
 
+## 7.9 unused ----
 
-
-
-# map electronic manufacturing facilities ----
+# electronic manufacturing facilities
 
 ## pfas detected sites
 
@@ -2195,10 +2265,7 @@ ggplot() +
 
 ggsave("02_output/PFAS_sites_pws_pfasovermrl_plastics.png", height = 7, width = 8, units = "in")
 
-
-
-
-# map plastics manufacturing facilities ----
+# map plastics manufacturing facilities
 
 ## pfas detected sites
 
@@ -2422,12 +2489,4 @@ ggplot() +
 
 ggsave("02_output/PFAS_sites_pws_pfasovermrl_plastics.png", height = 7, width = 8, units = "in")
 
-
-
-
-
-
-
-
-
-= ifelse(contaminant == "" & analyticalresultssign == "=", 1, 0),
+# end of r script --------------------------------------------------------
