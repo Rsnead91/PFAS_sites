@@ -607,7 +607,7 @@ dep_sampling_2019_2020_2021 <- rbind(dep_sampling_2019, dep_sampling_2020, dep_s
 
 ucmr3 <- read_tsv("00_data/UCMR3_ALL_MA_WY.txt") %>% 
   filter(State == "PA" & Contaminant %in% c("PFHpA", "PFHxS", "PFNA", "PFOA", "PFOS", "PFBS")) %>% 
-  dplyr::select(PWSID, CollectionDate, Contaminant, SampleID, SamplePointName, FacilityWaterType, MRL, AnalyticalResultsSign, AnalyticalResultValue) %>% 
+#  dplyr::select(PWSID, CollectionDate, Contaminant, SampleID, SamplePointName, FacilityWaterType, MRL, AnalyticalResultsSign, AnalyticalResultValue) %>% 
   mutate(
     PWSID = substr(PWSID,3,10),
     Contaminant = tolower(Contaminant)
@@ -615,6 +615,11 @@ ucmr3 <- read_tsv("00_data/UCMR3_ALL_MA_WY.txt") %>%
 
 colnames(ucmr3) <- tolower(colnames(ucmr3))
 
+nrow(
+  ucmr3 %>% 
+    filter(state == "PA" & contaminant == "pfoa") %>% 
+    dplyr::select(pwsid, sampleid)
+)
 
 ### 2.6.3 ucmr 5 ----
 
@@ -884,7 +889,7 @@ pa_pfas_sampling$analyticalresultvalue <- ifelse(
 pa_pfas_sampling <- pa_pfas_sampling %>% 
                       mutate(
                         mrl = case_when( #MRLs: https://www.epa.gov/dwucmr/fifth-unregulated-contaminant-monitoring-rule#scope
-                          contaminant == 'pfoa' ~ 0.004,
+                          contaminant == 'pfoa' ~ c,
                           contaminant == 'pfos' ~ 0.004,
                           contaminant == 'pfba' ~ 0.005,
                           contaminant == '6:2 fts' ~ 0.005,
@@ -1581,6 +1586,201 @@ for (i in 1:length(contaminants)) {
 colnames(contam_descrip) <- c("contaminant","num_pws_sampledchem","num_pws_chem_above_mrl")
 
 write_csv(contam_descrip, file = "00_data/contam_descrip.csv")
+
+
+
+# for Ted 11/22/2023 ----
+
+pa_pfas_sampling_pfoa <- pa_pfas_sampling %>% 
+  filter(contaminant == "pfoa" & analyticalresultssign == "=") %>% 
+  arrange(pws_id, collectiondate, sampleid)
+
+
+pa_pfas_sampling_wide_pfoa_pos <- pa_pfas_sampling_wide %>% 
+  filter(pfoa_above_mrl_0_004 == 1) %>% 
+  dplyr::select(pws_id)
+
+pfoa <- left_join(pa_pfas_sampling_wide_pfoa_pos, pa_pfas_sampling, by = "pws_id") %>% 
+  filter(contaminant == "pfoa") %>% 
+  dplyr::select(pws_id, collectiondate, analyticalresultvalue, data_source, samplepointname) %>% 
+  arrange(pws_id, samplepointname, collectiondate)
+
+pfoa <-left_join(
+  pfoa,
+  pfoa %>% 
+    arrange(pws_id, samplepointname) %>%
+    distinct(pws_id, samplepointname) %>%
+    group_by(pws_id) %>% 
+    mutate(sample_location = row_number())
+  ,
+  by = c("pws_id","samplepointname")
+)
+
+pfoa <-left_join(
+  pfoa,
+  pfoa %>% 
+    arrange(pws_id, samplepointname, collectiondate) %>%
+    distinct(pws_id, samplepointname, collectiondate) %>%
+    group_by(pws_id, samplepointname) %>% 
+    mutate(sample_location_date = row_number())
+  ,
+  by = c("pws_id","samplepointname", "collectiondate")
+) %>% 
+  mutate(analyticalresultvalue = ifelse(is.na(analyticalresultvalue), 0.004, as.character(analyticalresultvalue)))
+
+pfoa_wide1 <- pivot_wider(
+  data = pfoa %>% distinct(pws_id, collectiondate, data_source, samplepointname, sample_location, sample_location_date, .keep_all = TRUE) %>% dplyr::select(-collectiondate),
+  id_cols = c(pws_id, samplepointname),
+  names_from = sample_location_date,
+  values_from = analyticalresultvalue,
+  names_prefix = "analyticalresultvalue_"
+)
+
+pfoa_wide2 <- pivot_wider(
+  data = pfoa %>% distinct(pws_id, collectiondate, data_source, samplepointname, sample_location, sample_location_date, .keep_all = TRUE) %>% dplyr::select(-analyticalresultvalue),
+    id_cols = c(pws_id, samplepointname),
+    names_from = sample_location_date,
+    values_from = collectiondate,
+    names_prefix = "date_"
+  )
+
+pfoa_wide <- cbind(pfoa_wide1, pfoa_wide2 %>% dplyr::select(-c(pws_id, samplepointname)))
+
+pfoa_wide_wide <- pivot_wider(
+  data = pfoa_wide1 %>% group_by(pws_id) %>% mutate(row = row_number()),
+  id_cols = pws_id,
+  names_from = row,
+  values_from = c(analyticalresultvalue_1,analyticalresultvalue_2,analyticalresultvalue_3,analyticalresultvalue_4)
+) %>%
+  select_if(~!all(is.na(.)))
+
+
+
+pfoa_wide_cnty <- left_join(pfoa_wide, dplyr::select(pws %>% mutate(PWS_ID = as.numeric(PWS_ID)), PWS_ID, CNTY_NAME), by = c("pws_id" = "PWS_ID"))
+
+pfoa_wide_cnty <- pfoa_wide_cnty %>%
+  dplyr::select(-geoms)
+
+write_csv(pfoa_wide_cnty, file = "00_data/pfoa_wide.csv")
+
+
+# notes: how to handle values above MRL? Make figure only for samples above MRL
+# Make dichotomous figure above or below MRL
+# split by sampling areas
+# assume sample ids/locations have the same name between UCMRs
+# DEP: if the same pws and collection date, we can assume it's from different wells
+# DEP: if the same pws but not collection date, we cant assume it's from the same or different wells
+# x-axis time
+# could do a chart for overall pws and give unique binary result for a collectiondate
+
+
+# Plotting with ggplot using points
+pfoa_cnty$collectiondate <- as.Date(pfoa_cnty$collectiondate)
+
+# Plotting with ggplot using points and adding a horizontal line
+ggplot(pfoa_cnty, aes(x = collectiondate, y = as.numeric(analyticalresultvalue), color = factor(ifelse(analyticalresultvalue > 0.004, "above", ifelse(analyticalresultvalue == 0.004, "equal", "below"))))) +
+  geom_point(size = 2) +  # Use geom_point for a scatter plot
+  geom_hline(yintercept = 0.004, linetype = "dashed", color = "red") +  # Horizontal reference line
+  labs(x = "Date", y = "Value", title = "Continuous Y-axis vs Date X-axis with Points") +
+  scale_y_continuous(limits = c(0, 0.35)) +  # Setting y-axis limits
+  scale_x_date(date_breaks = "6 months", date_labels = "%b %Y") +  # Remove breaks in x-axis
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom", legend.title = element_blank()) +  # Rotate x-axis labels
+  facet_wrap(~ CNTY_NAME, scales = "free_y", ncol = 1) +  # Facet by county with independent y-axis scales in a single column
+  scale_color_manual(values = c("above" = "red", "below" = "green", "equal" = "darkgrey"), labels = c("above" = "Above 0.004", "below" = "Below 0.004", "equal" = "Equal to 0.004"))
+
+
+
+
+breaks <- as.Date(c("2013-01-01", "2015-12-31", "2020-01-01", "2021-02-01", "2023-01-01", "2023-06-01"))
+
+# Plotting with ggplot using points and adding a horizontal line
+ggplot(pfoa_cnty %>% filter(CNTY_NAME == "Bucks"), aes(x = collectiondate, y = as.numeric(analyticalresultvalue), color = factor(ifelse(analyticalresultvalue > 0.004, "above", ifelse(analyticalresultvalue == 0.004, "equal", "below"))))) +
+  geom_point(size = 3) +  # Use geom_point for a scatter plot
+  geom_hline(yintercept = 0.004, linetype = "dashed", color = "red") +  # Horizontal reference line
+  labs(x = "Date", y = "Value", title = "Continuous Y-axis vs Date X-axis with Points") +
+  scale_y_continuous(limits = c(0, 0.35)) +  # Setting y-axis limits
+  scale_x_date(breaks = breaks, date_labels = "%b %Y") +  # Set manual breaks in x-axis
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom", legend.title = element_blank()) +  # Rotate x-axis labels and set legend position
+  facet_wrappws_id ~ subset, scales = "free_y", ncol = 1) +  # Facet by county with independent y-axis scales in a single column
+  scale_color_manual(values = c("above" = "red", "below" = "green", "equal" = "darkgrey"), labels = c("above" = "Above 0.004", "below" = "Below 0.004", "equal" = "Equal to 0.004"))
+
+
+
+
+
+
+
+# Filter the data into three subsets based on date ranges
+subset1 <- pfoa_cnty %>%
+  filter(collectiondate >= as.Date("2013-01-01") & collectiondate <= as.Date("2015-12-31"))
+
+subset2 <- pfoa_cnty %>%
+  filter(collectiondate >= as.Date("2020-01-01") & collectiondate <= as.Date("2021-02-01"))
+
+subset3 <- pfoa_cnty %>%
+  filter(collectiondate >= as.Date("2023-01-01") & collectiondate <= as.Date("2023-06-01"))
+
+# Combine the subsets into a single data frame with an identifier for each subset
+subset1$subset <- "Subset 1"
+subset2$subset <- "Subset 2"
+subset3$subset <- "Subset 3"
+
+combined_data <- rbind(subset1, subset2, subset3)
+
+# Plotting with ggplot using points and adding a horizontal line
+ggplot(combined_data, aes(x = collectiondate, y = as.numeric(analyticalresultvalue), color = factor(ifelse(analyticalresultvalue > 0.004, "above", ifelse(analyticalresultvalue == 0.004, "equal", "below"))))) +
+  geom_point(size = 2) +  # Use geom_point for a scatter plot
+  geom_hline(yintercept = 0.004, linetype = "dashed", color = "red") +  # Horizontal reference line
+  labs(x = "Date", y = "Value", title = "Continuous Y-axis vs Date X-axis with Points") +
+  scale_x_date(date_labels = "%b %Y") +  # Format x-axis date labels
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom", legend.title = element_blank()) +  # Rotate x-axis labels and set legend position
+  facet_grid(CNTY_NAME ~ subset, scales = "free") +  # Facet by CNTY_NAME and subsets in grid format
+  scale_color_manual(values = c("above" = "red", "below" = "green", "equal" = "darkgrey"), labels = c("above" = "Above 0.004", "below" = "Below 0.004", "equal" = "Equal to 0.004"))
+
+
+ggplot(combined_data, aes(x = collectiondate, y = as.numeric(analyticalresultvalue), color = factor(ifelse(analyticalresultvalue > 0.004, "above", ifelse(analyticalresultvalue == 0.004, "equal", "below"))))) +
+  geom_point(size = 2) +
+  geom_hline(yintercept = 0.004, linetype = "dashed", color = "red") +
+  labs(x = "Date", y = "PFOA detected value", title = "PFOA sampling results by data source and county (MRL = 0.004)") +
+  scale_x_date(date_labels = "%b %Y") +
+  scale_y_continuous(labels = function(x) sprintf("%.4f", x)) +
+  facet_grid(CNTY_NAME ~ subset, scales = "free", switch = "y",
+             labeller = labeller(subset = c("Subset 1" = "UCMR 3", "Subset 2" = "PA DEP", "Subset 3" = "UCMR 5"))) +  # Facet by CNTY_NAME and subsets in grid format
+  scale_color_manual(values = c("above" = "red", "below" = "green", "equal" = "darkgrey"),
+                     labels = c("above" = "Above MRL", "below" = "Below MRL", "equal" = "Equal to MRL")) +  # Change legend labels
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, family = "Arial"),  # Rotate x-axis labels and set font
+        legend.position = "bottom", legend.title = element_blank(),
+        panel.background = element_rect(fill = "white", color = "black"),  # Set plot and panel background
+        strip.background = element_rect(fill = "white"),  # Set strip (row and column label) background
+        strip.placement = "outside",  # Place strip labels outside the plot
+        text = element_text(family = "Arial", color = "black"),
+        panel.spacing = unit(0.25, "cm", data = NULL))
+
+
+
+
+
+
+ggplot(combined_data %>% filter(CNTY_NAME == "Bucks"), aes(x = collectiondate, y = as.numeric(analyticalresultvalue), color = factor(ifelse(analyticalresultvalue > 0.004, "above", ifelse(analyticalresultvalue == 0.004, "equal", "below"))))) +
+  geom_point(size = 2) +
+  geom_hline(yintercept = 0.004, linetype = "dashed", color = "red") +
+  labs(x = "Date", y = "PFOA detected value", title = "PFOA sampling results by data source and PWS ID for Bucks County (MRL = 0.004)") +
+  scale_x_date(date_labels = "%b %Y") +
+  scale_y_continuous(labels = function(x) sprintf("%.4f", x)) +
+  facet_grid(pws_id ~ subset, scales = "free", switch = "y",
+             labeller = labeller(subset = c("Subset 1" = "UCMR 3", "Subset 2" = "PA DEP", "Subset 3" = "UCMR 5"))) +  # Facet by CNTY_NAME and subsets in grid format
+  scale_color_manual(values = c("above" = "red", "below" = "green", "equal" = "darkgrey"),
+                     labels = c("above" = "Above MRL", "below" = "Below MRL", "equal" = "Equal to MRL")) +  # Change legend labels
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, family = "Arial"),  # Rotate x-axis labels and set font
+        legend.position = "bottom", legend.title = element_blank(),
+        panel.background = element_rect(fill = "white", color = "black"),  # Set plot and panel background
+        strip.background = element_rect(fill = "white"),  # Set strip (row and column label) background
+        strip.placement = "outside",  # Place strip labels outside the plot
+        text = element_text(family = "Arial", color = "black"),
+        panel.spacing = unit(0.25, "cm", data = NULL))
+
+
+
 
 
 # 7. maps ----
