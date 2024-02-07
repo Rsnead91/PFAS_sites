@@ -645,11 +645,16 @@ ggsave("02_output/bivar_kidney_pfas.png")
 
 
 
+# statistical association ----
+
+chisq.test(thyroid_agg_tot_lmi_geo2$incd_rt_tert, thyroid_agg_tot_lmi_geo2$pfas_tri)
+
+cor.test(x=as.numeric(thyroid_agg_tot_lmi_geo2$incd_rt_tert), y=as.numeric(thyroid_agg_tot_lmi_geo2$pfas_tri), method = 'kendall')
 
 
+chisq.test(kidney_agg_tot_lmi_geo2$incd_rt_tert, kidney_agg_tot_lmi_geo2$pfas_tri)
 
-
-
+cor.test(x=as.numeric(kidney_agg_tot_lmi_geo2$incd_rt_tert), y=as.numeric(kidney_agg_tot_lmi_geo2$pfas_tri), method = 'kendall')
 
 
 
