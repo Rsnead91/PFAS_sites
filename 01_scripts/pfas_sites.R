@@ -4,7 +4,7 @@
 
 if (!require("pacman")) install.packages("pacman")
 
-pacman::p_load('utils','tidycensus','tidyverse','ggspatial','arcpullr','tigris','raster','pdftools','readxl','units','sf','ggmap','reshape2','janitor','ggpattern','tidygeocoder','lubridate')
+pacman::p_load('utils','tidycensus','tidyverse','ggspatial','arcpullr','tigris','raster','pdftools','readxl','units','sf','ggmap','reshape2','janitor','ggpattern','tidygeocoder','lubridate', 'openxlsx')
 
 options(scipen = 999)
 
@@ -16,7 +16,7 @@ study_counties <- tigris::counties(state = "42", cb = TRUE) %>%
                     filter(NAMELSAD %in% c("Berks County", "Bucks County", "Carbon County", "Chester County", "Delaware County", "Lancaster County", "Lebanon County", "Lehigh County", "Monroe County", "Montgomery County", "Northampton County", "Schuylkill County")) %>% 
                     st_set_crs(st_crs(4269))
 # saving shp
-st_write(study_counties, dsn = "00_data/study_counties.shp")
+# st_write(study_counties, dsn = "00_data/study_counties.shp")
 
 ## 2.2 known pfas ----
 
@@ -45,7 +45,7 @@ superfund_merge <- merge(x = superfund %>%
                          by = "name")
 
 # saving shp
-st_write(superfund_merge, dsn = "00_data/known_pfas_superfund_sites.shp")
+# st_write(superfund_merge, dsn = "00_data/known_pfas_superfund_sites.shp")
 
 
 ### 2.2.2 hsca sites ----
@@ -68,7 +68,7 @@ non_superfund <- st_as_sf(
               st_set_crs(st_crs(4269))
 
 # saving shp
-st_write(non_superfund, dsn = "00_data/known_pfas_hsca_sites.shp")
+# st_write(non_superfund, dsn = "00_data/known_pfas_hsca_sites.shp")
 
 
 ### 2.2.3 neshaminy creek watershed ----
@@ -198,7 +198,7 @@ airports <- st_intersection(
 )
 
 # saving shp
-st_write(airports, dsn = "00_data/susp_pfas_airports.shp")
+# st_write(airports, dsn = "00_data/susp_pfas_airports.shp")
 
 
 ### 2.3.2 firefighter training sites ----
@@ -211,7 +211,7 @@ Fire_Training_Facilities <- st_as_sf(
                               st_transform(crs = 4269) # set projection to match other geo files
 
 # saving shp
-st_write(Fire_Training_Facilities, dsn = "00_data/susp_pfas_firefighter_training.shp")
+# st_write(Fire_Training_Facilities, dsn = "00_data/susp_pfas_firefighter_training.shp")
 
 
 ### 2.3.3 landfill sites ----
@@ -238,6 +238,8 @@ landfill_residual <- st_make_valid(landfill_residual)
 
 landfill <- rbind(landfill_municipality,landfill_residual)
 
+st_write(landfill, dsn = "/Users/rsnead91/Documents/Personal/Work/Teaching/Course Development/Spatial Analysis Course/Class Prep/Modules/module11/pa_landfills.shp")
+
 # spatial join
 
 landfill_studyarea <- st_intersection(
@@ -246,7 +248,7 @@ landfill_studyarea <- st_intersection(
 )
 
 # saving shp
-st_write(landfill_studyarea, dsn = "00_data/susp_pfas_landfills.shp")
+# st_write(landfill_studyarea, dsn = "00_data/susp_pfas_landfills.shp")
 
 
 ### 2.3.4 EPA's envirofacts facilities registry: potential sources of PFAS ----
@@ -264,7 +266,7 @@ manufacturing <- st_intersection(
 )
 
 # saving shp
-st_write(manufacturing, dsn = "00_data/susp_pfas_manufacturing.shp")
+# st_write(manufacturing, dsn = "00_data/susp_pfas_manufacturing.shp")
 
 
 ## 2.4 possible PWS wells/intakes ----
@@ -282,7 +284,7 @@ wells <- st_intersection(
 )
 
 # saving shp
-st_write(wells, dsn = "00_data/wells.shp")
+# st_write(wells, dsn = "00_data/wells.shp")
 
 
 intakes <- st_as_sf(
@@ -298,7 +300,7 @@ intakes <- st_intersection(
 )
 
 # saving shp
-st_write(intakes, dsn = "00_data/intakes.shp")
+# st_write(intakes, dsn = "00_data/intakes.shp")
 
 
 ## 2.5 public water supply areas ----
@@ -314,7 +316,7 @@ pws <- get_spatial_layer("https://mapservices.pasda.psu.edu/server/rest/services
 pws <- st_make_valid(pws)
 
 # saving shp
-st_write(pws, dsn = "00_data/pws.shp")
+# st_write(pws, dsn = "00_data/pws.shp")
 
 
 ## 2.6 pfas sampling data ----
@@ -628,19 +630,19 @@ nrow(
 
 ucmr5 <- read_tsv("00_data/UCMR5_ALL_MA_WY.txt") %>% 
           filter(State == "PA" & Contaminant != "lithium") %>% 
-          dplyr::select(PWSID, CollectionDate, Contaminant, SampleID, SamplePointName, FacilityWaterType, MRL, AnalyticalResultsSign, AnalyticalResultValue) %>% 
+#          dplyr::select(PWSID, CollectionDate, Contaminant, SampleID, SamplePointName, FacilityWaterType, MRL, AnalyticalResultsSign, AnalyticalResultValue) %>% 
           mutate(
             PWSID = substr(PWSID,3,10),
             Contaminant = tolower(Contaminant)
-          )
+          ) %>% 
+  dplyr::select(-c(UCMR1SampleType, Units))
 
 colnames(ucmr5) <- tolower(colnames(ucmr5))
-
 
 ### 2.6.4 merging all sampling data  ----
 
 ## dep
-reduce_to_study_pwsid <- pws.shp %>% 
+reduce_to_study_pwsid <- pws %>% 
                                 dplyr::select(PWS_ID) %>% 
                                 st_drop_geometry()
 
@@ -655,6 +657,9 @@ ucmr <- left_join(x=reduce_to_study_pwsid, y=rbind(ucmr3,ucmr5), by = c("pws_id"
   drop_na(collectiondate) %>% 
   mutate(data_source = "UCMR") %>% 
   clean_names()
+
+st_write(st_as_sf(pws_pfastested %>% dplyr::select(pws_id, geometry)), "/Users/rsnead91/Documents/Personal/Work/Jobs/PFAS + Cancer/Population Estimates/01_data/pws_pfastested.shp", append = FALSE)
+
 
 # pa_pfas_sampling_ucmr3dep <- rbind(
 #   cbind(
@@ -889,7 +894,7 @@ pa_pfas_sampling$analyticalresultvalue <- ifelse(
 pa_pfas_sampling <- pa_pfas_sampling %>% 
                       mutate(
                         mrl = case_when( #MRLs: https://www.epa.gov/dwucmr/fifth-unregulated-contaminant-monitoring-rule#scope
-                          contaminant == 'pfoa' ~ c,
+                          contaminant == 'pfoa' ~ 0.004,
                           contaminant == 'pfos' ~ 0.004,
                           contaminant == 'pfba' ~ 0.005,
                           contaminant == '6:2 fts' ~ 0.005,
@@ -1062,7 +1067,7 @@ pa_pfas_sampling_wide <- left_join(
                               nfdha_above_mrl_0_020 = ifelse(contaminant == "nfdha" & analyticalresultssign == "=", 1, 0),
                               nmefosaa_above_mrl_0_006 = ifelse(contaminant == "nmefosaa" & analyticalresultssign == "=", 1, 0),
                               pfba_above_mrl_0_005 = ifelse(contaminant == "pfba" & analyticalresultssign == "=", 1, 0),
-                              pfbs_above_mrl_0_090 = ifelse(contaminant == "pfbs" & analyticalresultssign == "=", 1, 0),
+                              pfbs_above_mrl_0_003 = ifelse(contaminant == "pfbs" & analyticalresultssign == "=", 1, 0),
                               pfda_above_mrl_0_003 = ifelse(contaminant == "pfda" & analyticalresultssign == "=", 1, 0),
                               pfdoa_above_mrl_0_003 = ifelse(contaminant == "pfdoa" & analyticalresultssign == "=", 1, 0),
                               pfeesa_above_mrl_0_003 = ifelse(contaminant == "pfeesa" & analyticalresultssign == "=", 1, 0),
@@ -1094,7 +1099,7 @@ pa_pfas_sampling_wide <- left_join(
                               nfdha_above_mrl_0_020 = ifelse(sum(nfdha_above_mrl_0_020)>0,1,0),
                               nmefosaa_above_mrl_0_006 = ifelse(sum(nmefosaa_above_mrl_0_006)>0,1,0),
                               pfba_above_mrl_0_005 = ifelse(sum(pfba_above_mrl_0_005)>0,1,0),
-                              pfbs_above_mrl_0_090 = ifelse(sum(pfbs_above_mrl_0_090)>0,1,0),
+                              pfbs_above_mrl_0_003 = ifelse(sum(pfbs_above_mrl_0_003)>0,1,0),
                               pfda_above_mrl_0_003 = ifelse(sum(pfda_above_mrl_0_003)>0,1,0),
                               pfdoa_above_mrl_0_003 = ifelse(sum(pfdoa_above_mrl_0_003)>0,1,0),
                               pfeesa_above_mrl_0_003 = ifelse(sum(pfeesa_above_mrl_0_003)>0,1,0),
@@ -1309,13 +1314,13 @@ write_csv(pa_pfas_sampling_rti, file = "00_data/pa_pfas_sampling_rti.csv")
 pws_pfastested <- merge(
                     x = pa_pfas_sampling_wide,
                     y = pws %>% 
-                      dplyr::select(PWS_ID, NAME,CNTY_NAME, GW_SOURCE, SW_SOURCE, INTCONNECT, OWNERSHIP),
+                      dplyr::select(PWS_ID, NAME,CNTY_NA, GW_SOUR, SW_SOUR, INTCONN, OWNERSH),
                     by.x = "pws_id",
                     by.y = "PWS_ID",
                     keep.x = TRUE
                   )
   
-st_write(pws_pfastested, dsn = "00_data/pws_pfastested.shp")
+# st_write(pws_pfastested, dsn = "00_data/pws_pfastested.shp")
 
 
 # 5. calculate pws site density ----
@@ -1461,7 +1466,6 @@ write_csv(pws_counts, file = "00_data/pws_counts.csv")
 
 
 
-
 # Create a .zip archive with one or more files
 zip(zipfile = "00_data/pfas_data_geo.zip", 
     files = c(
@@ -1591,6 +1595,22 @@ write_csv(contam_descrip, file = "00_data/contam_descrip.csv")
 
 # for Ted 11/22/2023 ----
 
+ucmr_epa <- ucmr %>% 
+  dplyr::select(PWS_ID, PWSName, FacilityID, FacilityName, FacilityWaterType, SamplePointID, SamplePointName, SamplePointType, AssociatedFacilityID, AssociatedSamplePointID, SampleID, SampleEventCode)
+
+ucmr_epa_cnty <- left_join(ucmr_epa, dplyr::select(pws, PWS_ID, CNTY_NAME), by = "PWS_ID") %>% 
+  filter(!(PWS_ID %in% c(1460033, 1090069, 1090070))) %>%
+  dplyr::select(-geoms)
+
+write_csv(ucmr_epa_cnty, file = "00_data/ucmr_studyarea.csv")
+
+view(ucmr_epa_cnty %>% filter(CNTY_NAME == "Bucks"))
+
+view(ucmr_epa_cnty %>% filter(CNTY_NAME == "Montgomery"))
+
+
+
+
 pa_pfas_sampling_pfoa <- pa_pfas_sampling %>% 
   filter(contaminant == "pfoa" & analyticalresultssign == "=") %>% 
   arrange(pws_id, collectiondate, sampleid)
@@ -1599,6 +1619,8 @@ pa_pfas_sampling_pfoa <- pa_pfas_sampling %>%
 pa_pfas_sampling_wide_pfoa_pos <- pa_pfas_sampling_wide %>% 
   filter(pfoa_above_mrl_0_004 == 1) %>% 
   dplyr::select(pws_id)
+
+pa_pfas_sampling$pws_id <- as.numeric(pa_pfas_sampling$pws_id) 
 
 pfoa <- left_join(pa_pfas_sampling_wide_pfoa_pos, pa_pfas_sampling, by = "pws_id") %>% 
   filter(contaminant == "pfoa") %>% 
@@ -1656,10 +1678,11 @@ pfoa_wide_wide <- pivot_wider(
 
 
 
-pfoa_wide_cnty <- left_join(pfoa_wide, dplyr::select(pws %>% mutate(PWS_ID = as.numeric(PWS_ID)), PWS_ID, CNTY_NAME), by = c("pws_id" = "PWS_ID"))
+pfoa_wide_cnty <- left_join(pfoa_wide, dplyr::select(pws %>% mutate(PWS_ID = as.numeric(PWS_ID)), PWS_ID, CNTY_NA), by = c("pws_id" = "PWS_ID"))
 
 pfoa_wide_cnty <- pfoa_wide_cnty %>%
-  dplyr::select(-geoms)
+  st_drop_geometry()
+  #dplyr::select(-geometry)
 
 write_csv(pfoa_wide_cnty, file = "00_data/pfoa_wide.csv")
 
@@ -1728,56 +1751,915 @@ subset3$subset <- "Subset 3"
 combined_data <- rbind(subset1, subset2, subset3)
 
 # Plotting with ggplot using points and adding a horizontal line
-ggplot(combined_data, aes(x = collectiondate, y = as.numeric(analyticalresultvalue), color = factor(ifelse(analyticalresultvalue > 0.004, "above", ifelse(analyticalresultvalue == 0.004, "equal", "below"))))) +
-  geom_point(size = 2) +  # Use geom_point for a scatter plot
-  geom_hline(yintercept = 0.004, linetype = "dashed", color = "red") +  # Horizontal reference line
-  labs(x = "Date", y = "Value", title = "Continuous Y-axis vs Date X-axis with Points") +
-  scale_x_date(date_labels = "%b %Y") +  # Format x-axis date labels
-  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom", legend.title = element_blank()) +  # Rotate x-axis labels and set legend position
-  facet_grid(CNTY_NAME ~ subset, scales = "free") +  # Facet by CNTY_NAME and subsets in grid format
-  scale_color_manual(values = c("above" = "red", "below" = "green", "equal" = "darkgrey"), labels = c("above" = "Above 0.004", "below" = "Below 0.004", "equal" = "Equal to 0.004"))
+# ggplot(combined_data, aes(x = mdy(collectiondate), y = as.numeric(analyticalresultvalue), color = factor(ifelse(analyticalresultvalue > 0.004, "above", ifelse(analyticalresultvalue == 0.004, "equal", "below"))))) +
+#   geom_point(size = 2) +  # Use geom_point for a scatter plot
+#   geom_hline(yintercept = 0.004, linetype = "dashed", color = "red") +  # Horizontal reference line
+#   labs(x = "Date", y = "Value", title = "Continuous Y-axis vs Date X-axis with Points") +
+#   scale_x_date(date_labels = "%b %Y") +  # Format x-axis date labels
+#   theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom", legend.title = element_blank()) +  # Rotate x-axis labels and set legend position
+#   facet_grid(CNTY_NA ~ subset, scales = "free") +  # Facet by CNTY_NAME and subsets in grid format
+#   scale_color_manual(values = c("above" = "red", "below" = "green", "equal" = "darkgrey"), labels = c("above" = "Above 0.004", "below" = "Below 0.004", "equal" = "Equal to 0.004"))
 
 
-ggplot(combined_data, aes(x = collectiondate, y = as.numeric(analyticalresultvalue), color = factor(ifelse(analyticalresultvalue > 0.004, "above", ifelse(analyticalresultvalue == 0.004, "equal", "below"))))) +
+# ggplot(combined_data, aes(x = mdy(collectiondate), y = as.numeric(analyticalresultvalue), color = factor(ifelse(analyticalresultvalue > 0.004, "above", ifelse(analyticalresultvalue == 0.004, "equal", "below"))))) +
+#   geom_point(size = 2) +
+#   geom_hline(yintercept = 0.004, linetype = "dashed", color = "red") +
+#   labs(x = "Date", y = "PFOA Detected Value", title = "PFOA Sampling Results by Data Source and County (MRL = 0.004)") +
+#   scale_x_date(date_labels = "%b %Y") +
+#   scale_y_continuous(labels = function(x) sprintf("%.4f", x)) +
+#   facet_grid(CNTY_NA ~ subset, scales = "free", switch = "y",
+#              labeller = labeller(subset = c("Subset 1" = "UCMR 3", "Subset 2" = "PA DEP", "Subset 3" = "UCMR 5"))) +  # Facet by CNTY_NAME and subsets in grid format
+#   scale_color_manual(values = c("above" = "red", "below" = "green", "equal" = "darkgrey"),
+#                      labels = c("above" = "Above MRL", "below" = "Below MRL", "equal" = "Equal to MRL")) +  # Change legend labels
+#   theme(
+#     axis.text.x = element_text(size = 11, angle = 45, hjust = 1, family = "Arial"),  # Rotate x-axis labels and set font
+#     strip.text.y = element_text(size = 11),
+#     strip.text.x.top = element_text(size = 11),
+#     legend.position = "bottom", legend.title = element_blank(),
+#     plot.title = element_text(hjust = 0.5),
+#     panel.background = element_rect(fill = "white", color = "black"),  # Set plot and panel background
+#     strip.background = element_rect(fill = "white"),  # Set strip (row and column label) background
+#     strip.placement = "outside",  # Place strip labels outside the plot
+#     text = element_text(family = "Arial", color = "black"),
+#     panel.spacing = unit(0.25, "cm", data = NULL)
+#     )
+# 
+# ggsave("/Users/rsnead91/Documents/Personal/Work/Jobs/PFAS + Cancer/PFAS_sites/02_output/samplingresults_county.png", units = "in", height = 9, width = 12)
+
+
+
+
+
+
+
+
+
+#### PFAS TIME SERIES PLOTS ----
+
+### PFOA
+
+pa_pfas_sampling_pfoa <- pa_pfas_sampling %>% 
+  filter(contaminant == "pfoa" & analyticalresultssign == "=") %>% 
+  arrange(pws_id, collectiondate, sampleid)
+
+
+pa_pfas_sampling_wide_pfoa_pos <- pa_pfas_sampling_wide %>% 
+  filter(pfoa_above_mrl_0_004 == 1) %>% 
+  dplyr::select(pws_id)
+
+pa_pfas_sampling$pws_id <- as.numeric(pa_pfas_sampling$pws_id) 
+
+pfoa <- left_join(pa_pfas_sampling_wide_pfoa_pos, pa_pfas_sampling, by = "pws_id") %>% 
+  filter(contaminant == "pfoa") %>% 
+  dplyr::select(pws_id, collectiondate, analyticalresultvalue, data_source, samplepointname) %>% 
+  arrange(pws_id, samplepointname, collectiondate)
+
+pfoa <-left_join(
+  pfoa,
+  pfoa %>% 
+    arrange(pws_id, samplepointname) %>%
+    distinct(pws_id, samplepointname) %>%
+    group_by(pws_id) %>% 
+    mutate(sample_location = row_number())
+  ,
+  by = c("pws_id","samplepointname")
+)
+
+pfoa <-left_join(
+  pfoa,
+  pfoa %>% 
+    arrange(pws_id, samplepointname, collectiondate) %>%
+    distinct(pws_id, samplepointname, collectiondate) %>%
+    group_by(pws_id, samplepointname) %>% 
+    mutate(sample_location_date = row_number())
+  ,
+  by = c("pws_id","samplepointname", "collectiondate")
+) %>% 
+  mutate(analyticalresultvalue = ifelse(is.na(analyticalresultvalue), 0.004, as.character(analyticalresultvalue)))
+
+# Filter the data into three subsets based on date ranges
+
+pfoa_cnty <- left_join(pfoa, dplyr::select(pws %>% mutate(PWS_ID = as.numeric(PWS_ID)), PWS_ID, CNTY_NA), by = c("pws_id" = "PWS_ID"))
+
+pfoa_cnty <- pfoa_cnty %>%
+  st_drop_geometry()
+#  dplyr::select(-geoms)
+
+subset1 <- pfoa_cnty %>%
+  filter(mdy(collectiondate) >= as.Date("2013-01-01") & mdy(collectiondate) <= as.Date("2015-12-31"))
+
+subset2 <- pfoa_cnty %>%
+  filter(mdy(collectiondate) >= as.Date("2020-01-01") & mdy(collectiondate) <= as.Date("2021-02-01"))
+
+subset3 <- pfoa_cnty %>%
+  filter(mdy(collectiondate) >= as.Date("2023-01-01") & mdy(collectiondate) <= as.Date("2023-06-01"))
+
+# Combine the subsets into a single data frame with an identifier for each subset
+subset1$subset <- "Subset 1"
+subset2$subset <- "Subset 2"
+subset3$subset <- "Subset 3"
+
+combined_data <- rbind(subset1, subset2, subset3)
+
+# ggplot(combined_data %>% filter(pws_id == "1090069"), aes(x = mdy(collectiondate), y = as.numeric(analyticalresultvalue), color = factor(ifelse(analyticalresultvalue > 0.004, "above", ifelse(analyticalresultvalue == 0.004, "equal", "below"))))) +
+#   geom_point(size = 2) +
+#   geom_hline(yintercept = 0.004, linetype = "dashed", color = "red") +
+#   labs(x = "Date", y = "PFOA detected value", title = "PFOA sampling results by data source and PWS ID for Chester County (MRL = 0.004)") +
+#   scale_x_date(date_labels = "%b %Y") +
+#   scale_y_continuous(labels = function(x) sprintf("%.4f", x)) +
+#   facet_grid(pws_id ~ subset, scales = "free", switch = "y",
+#              labeller = labeller(subset = c("Subset 1" = "UCMR 3", "Subset 2" = "PA DEP", "Subset 3" = "UCMR 5"))) +  # Facet by CNTY_NAME and subsets in grid format
+#   scale_color_manual(values = c("above" = "red", "below" = "green", "equal" = "darkgrey"),
+#                      labels = c("above" = "Above MRL", "below" = "Below MRL", "equal" = "Equal to MRL")) +  # Change legend labels
+#   theme(axis.text.x = element_text(angle = 45, hjust = 1, family = "Arial"),  # Rotate x-axis labels and set font
+#         legend.position = "bottom", legend.title = element_blank(),
+#         panel.background = element_rect(fill = "white", color = "black"),  # Set plot and panel background
+#         strip.background = element_rect(fill = "white"),  # Set strip (row and column label) background
+#         strip.placement = "outside",  # Place strip labels outside the plot
+#         text = element_text(family = "Arial", color = "black"),
+#         panel.spacing = unit(0.25, "cm", data = NULL))
+# 
+# ggsave("/Users/rsnead91/Documents/Personal/Work/Jobs/PFAS + Cancer/PFAS_sites/02_output/samplingresults_1pwsid.png")
+
+
+ggplot(combined_data, aes(x = mdy(collectiondate), y = as.numeric(analyticalresultvalue), color = factor(ifelse(analyticalresultvalue > 0.004, "above", ifelse(analyticalresultvalue == 0.004, "equal", "below"))))) +
   geom_point(size = 2) +
   geom_hline(yintercept = 0.004, linetype = "dashed", color = "red") +
-  labs(x = "Date", y = "PFOA detected value", title = "PFOA sampling results by data source and county (MRL = 0.004)") +
+  labs(x = "Date", y = "PFOA Detected Value", title = "PFOA Sampling Results by Data Source and County (MRL = 0.004)") +
   scale_x_date(date_labels = "%b %Y") +
   scale_y_continuous(labels = function(x) sprintf("%.4f", x)) +
-  facet_grid(CNTY_NAME ~ subset, scales = "free", switch = "y",
+  facet_grid(CNTY_NA ~ subset, scales = "free", switch = "y",
              labeller = labeller(subset = c("Subset 1" = "UCMR 3", "Subset 2" = "PA DEP", "Subset 3" = "UCMR 5"))) +  # Facet by CNTY_NAME and subsets in grid format
   scale_color_manual(values = c("above" = "red", "below" = "green", "equal" = "darkgrey"),
                      labels = c("above" = "Above MRL", "below" = "Below MRL", "equal" = "Equal to MRL")) +  # Change legend labels
-  theme(axis.text.x = element_text(angle = 45, hjust = 1, family = "Arial"),  # Rotate x-axis labels and set font
-        legend.position = "bottom", legend.title = element_blank(),
-        panel.background = element_rect(fill = "white", color = "black"),  # Set plot and panel background
-        strip.background = element_rect(fill = "white"),  # Set strip (row and column label) background
-        strip.placement = "outside",  # Place strip labels outside the plot
-        text = element_text(family = "Arial", color = "black"),
-        panel.spacing = unit(0.25, "cm", data = NULL))
+  theme(
+    axis.text.x = element_text(size = 11, angle = 45, hjust = 1, family = "Arial"),  # Rotate x-axis labels and set font
+    strip.text.y = element_text(size = 11),
+    strip.text.x.top = element_text(size = 11),
+    legend.position = "bottom", legend.title = element_blank(),
+    plot.title = element_text(hjust = 0.5),
+    panel.background = element_rect(fill = "white", color = "black"),  # Set plot and panel background
+    strip.background = element_rect(fill = "white"),  # Set strip (row and column label) background
+    strip.placement = "outside",  # Place strip labels outside the plot
+    text = element_text(family = "Arial", color = "black"),
+    panel.spacing = unit(0.25, "cm", data = NULL)
+  )
 
+ggsave("/Users/rsnead91/Documents/Personal/Work/Jobs/PFAS + Cancer/PFAS_sites/02_output/samplingresults_county_pfoa.png", units = "in", height = 9, width = 12)
 
+### PFOS
 
+pa_pfas_sampling_pfos <- pa_pfas_sampling %>% 
+  filter(contaminant == "pfos" & analyticalresultssign == "=") %>% 
+  arrange(pws_id, collectiondate, sampleid)
 
+pa_pfas_sampling_wide_pfos_pos <- pa_pfas_sampling_wide %>% 
+  filter(pfos_above_mrl_0_004 == 1) %>% 
+  dplyr::select(pws_id)
 
+pa_pfas_sampling$pws_id <- as.numeric(pa_pfas_sampling$pws_id) 
 
-ggplot(combined_data %>% filter(CNTY_NAME == "Bucks"), aes(x = collectiondate, y = as.numeric(analyticalresultvalue), color = factor(ifelse(analyticalresultvalue > 0.004, "above", ifelse(analyticalresultvalue == 0.004, "equal", "below"))))) +
+pfos <- left_join(pa_pfas_sampling_wide_pfos_pos, pa_pfas_sampling, by = "pws_id") %>% 
+  filter(contaminant == "pfos") %>% 
+  dplyr::select(pws_id, collectiondate, analyticalresultvalue, data_source, samplepointname) %>% 
+  arrange(pws_id, samplepointname, collectiondate)
+
+pfos <-left_join(
+  pfos,
+  pfos %>% 
+    arrange(pws_id, samplepointname) %>%
+    distinct(pws_id, samplepointname) %>%
+    group_by(pws_id) %>% 
+    mutate(sample_location = row_number())
+  ,
+  by = c("pws_id","samplepointname")
+)
+
+pfos <-left_join(
+  pfos,
+  pfos %>% 
+    arrange(pws_id, samplepointname, collectiondate) %>%
+    distinct(pws_id, samplepointname, collectiondate) %>%
+    group_by(pws_id, samplepointname) %>% 
+    mutate(sample_location_date = row_number())
+  ,
+  by = c("pws_id","samplepointname", "collectiondate")
+) %>% 
+  mutate(analyticalresultvalue = ifelse(is.na(analyticalresultvalue), 0.004, as.character(analyticalresultvalue)))
+
+pfos_cnty <- left_join(pfos, dplyr::select(pws %>% mutate(PWS_ID = as.numeric(PWS_ID)), PWS_ID, CNTY_NA), by = c("pws_id" = "PWS_ID"))
+
+pfos_cnty <- pfos_cnty %>%
+  st_drop_geometry()
+#  dplyr::select(-geoms)
+
+subset1 <- pfos_cnty %>%
+  filter(mdy(collectiondate) >= as.Date("2013-01-01") & mdy(collectiondate) <= as.Date("2015-12-31"))
+
+subset2 <- pfos_cnty %>%
+  filter(mdy(collectiondate) >= as.Date("2020-01-01") & mdy(collectiondate) <= as.Date("2021-02-01"))
+
+subset3 <- pfos_cnty %>%
+  filter(mdy(collectiondate) >= as.Date("2023-01-01") & mdy(collectiondate) <= as.Date("2023-06-01"))
+
+# Combine the subsets into a single data frame with an identifier for each subset
+subset1$subset <- "Subset 1"
+subset2$subset <- "Subset 2"
+subset3$subset <- "Subset 3"
+
+combined_data <- rbind(subset1, subset2, subset3)
+
+ggplot(combined_data, aes(x = mdy(collectiondate), y = as.numeric(analyticalresultvalue), color = factor(ifelse(analyticalresultvalue > 0.004, "above", ifelse(analyticalresultvalue == 0.004, "equal", "below"))))) +
   geom_point(size = 2) +
   geom_hline(yintercept = 0.004, linetype = "dashed", color = "red") +
-  labs(x = "Date", y = "PFOA detected value", title = "PFOA sampling results by data source and PWS ID for Bucks County (MRL = 0.004)") +
+  labs(x = "Date", y = "PFOS Detected Value", title = "PFOS Sampling Results by Data Source and County (MRL = 0.004)") +
   scale_x_date(date_labels = "%b %Y") +
   scale_y_continuous(labels = function(x) sprintf("%.4f", x)) +
-  facet_grid(pws_id ~ subset, scales = "free", switch = "y",
+  facet_grid(CNTY_NA ~ subset, scales = "free", switch = "y",
              labeller = labeller(subset = c("Subset 1" = "UCMR 3", "Subset 2" = "PA DEP", "Subset 3" = "UCMR 5"))) +  # Facet by CNTY_NAME and subsets in grid format
   scale_color_manual(values = c("above" = "red", "below" = "green", "equal" = "darkgrey"),
                      labels = c("above" = "Above MRL", "below" = "Below MRL", "equal" = "Equal to MRL")) +  # Change legend labels
-  theme(axis.text.x = element_text(angle = 45, hjust = 1, family = "Arial"),  # Rotate x-axis labels and set font
-        legend.position = "bottom", legend.title = element_blank(),
-        panel.background = element_rect(fill = "white", color = "black"),  # Set plot and panel background
-        strip.background = element_rect(fill = "white"),  # Set strip (row and column label) background
-        strip.placement = "outside",  # Place strip labels outside the plot
-        text = element_text(family = "Arial", color = "black"),
-        panel.spacing = unit(0.25, "cm", data = NULL))
+  theme(
+    axis.text.x = element_text(size = 11, angle = 45, hjust = 1, family = "Arial"),  # Rotate x-axis labels and set font
+    strip.text.y = element_text(size = 11),
+    strip.text.x.top = element_text(size = 11),
+    legend.position = "bottom", legend.title = element_blank(),
+    plot.title = element_text(hjust = 0.5),
+    panel.background = element_rect(fill = "white", color = "black"),  # Set plot and panel background
+    strip.background = element_rect(fill = "white"),  # Set strip (row and column label) background
+    strip.placement = "outside",  # Place strip labels outside the plot
+    text = element_text(family = "Arial", color = "black"),
+    panel.spacing = unit(0.25, "cm", data = NULL)
+  )
+
+ggsave("/Users/rsnead91/Documents/Personal/Work/Jobs/PFAS + Cancer/PFAS_sites/02_output/samplingresults_county_pfos.png", units = "in", height = 9, width = 12)
+
+
+### PFNA
+
+pa_pfas_sampling_pfna <- pa_pfas_sampling %>% 
+  filter(contaminant == "pfna" & analyticalresultssign == "=") %>% 
+  arrange(pws_id, collectiondate, sampleid)
+
+pa_pfas_sampling_wide_pfna_pos <- pa_pfas_sampling_wide %>% 
+  filter(pfna_above_mrl_0_004 == 1) %>% 
+  dplyr::select(pws_id)
+
+pa_pfas_sampling$pws_id <- as.numeric(pa_pfas_sampling$pws_id) 
+
+pfna <- left_join(pa_pfas_sampling_wide_pfna_pos, pa_pfas_sampling, by = "pws_id") %>% 
+  filter(contaminant == "pfna") %>% 
+  dplyr::select(pws_id, collectiondate, analyticalresultvalue, data_source, samplepointname) %>% 
+  arrange(pws_id, samplepointname, collectiondate)
+
+pfna <-left_join(
+  pfna,
+  pfna %>% 
+    arrange(pws_id, samplepointname) %>%
+    distinct(pws_id, samplepointname) %>%
+    group_by(pws_id) %>% 
+    mutate(sample_location = row_number())
+  ,
+  by = c("pws_id","samplepointname")
+)
+
+pfna <-left_join(
+  pfna,
+  pfna %>% 
+    arrange(pws_id, samplepointname, collectiondate) %>%
+    distinct(pws_id, samplepointname, collectiondate) %>%
+    group_by(pws_id, samplepointname) %>% 
+    mutate(sample_location_date = row_number())
+  ,
+  by = c("pws_id","samplepointname", "collectiondate")
+) %>% 
+  mutate(analyticalresultvalue = ifelse(is.na(analyticalresultvalue), 0.004, as.character(analyticalresultvalue)))
+
+pfna_cnty <- left_join(pfna, dplyr::select(pws %>% mutate(PWS_ID = as.numeric(PWS_ID)), PWS_ID, CNTY_NA), by = c("pws_id" = "PWS_ID"))
+
+pfna_cnty <- pfna_cnty %>%
+  st_drop_geometry()
+#  dplyr::select(-geoms)
+
+subset1 <- pfna_cnty %>%
+  filter(mdy(collectiondate) >= as.Date("2013-01-01") & mdy(collectiondate) <= as.Date("2015-12-31"))
+
+subset2 <- pfna_cnty %>%
+  filter(mdy(collectiondate) >= as.Date("2020-01-01") & mdy(collectiondate) <= as.Date("2021-02-01"))
+
+subset3 <- pfna_cnty %>%
+  filter(mdy(collectiondate) >= as.Date("2023-01-01") & mdy(collectiondate) <= as.Date("2023-06-01"))
+
+# Combine the subsets into a single data frame with an identifier for each subset
+subset1$subset <- "Subset 1"
+subset2$subset <- "Subset 2"
+subset3$subset <- "Subset 3"
+
+combined_data <- rbind(subset1, subset2, subset3)
+
+ggplot(combined_data, aes(x = mdy(collectiondate), y = as.numeric(analyticalresultvalue), color = factor(ifelse(analyticalresultvalue > 0.004, "above", ifelse(analyticalresultvalue == 0.004, "equal", "below"))))) +
+  geom_point(size = 2) +
+  geom_hline(yintercept = 0.004, linetype = "dashed", color = "red") +
+  labs(x = "Date", y = "PFNA Detected Value", title = "PFNA Sampling Results by Data Source and County (MRL = 0.004)") +
+  scale_x_date(date_labels = "%b %Y") +
+  scale_y_continuous(labels = function(x) sprintf("%.4f", x)) +
+  facet_grid(CNTY_NA ~ subset, scales = "free", switch = "y",
+             labeller = labeller(subset = c("Subset 1" = "UCMR 3", "Subset 2" = "PA DEP", "Subset 3" = "UCMR 5"))) +  # Facet by CNTY_NAME and subsets in grid format
+  scale_color_manual(values = c("above" = "red", "below" = "green", "equal" = "darkgrey"),
+                     labels = c("above" = "Above MRL", "below" = "Below MRL", "equal" = "Equal to MRL")) +  # Change legend labels
+  theme(
+    axis.text.x = element_text(size = 11, angle = 45, hjust = 1, family = "Arial"),  # Rotate x-axis labels and set font
+    strip.text.y = element_text(size = 11),
+    strip.text.x.top = element_text(size = 11),
+    legend.position = "bottom", legend.title = element_blank(),
+    plot.title = element_text(hjust = 0.5),
+    panel.background = element_rect(fill = "white", color = "black"),  # Set plot and panel background
+    strip.background = element_rect(fill = "white"),  # Set strip (row and column label) background
+    strip.placement = "outside",  # Place strip labels outside the plot
+    text = element_text(family = "Arial", color = "black"),
+    panel.spacing = unit(0.25, "cm", data = NULL)
+  )
+
+ggsave("/Users/rsnead91/Documents/Personal/Work/Jobs/PFAS + Cancer/PFAS_sites/02_output/samplingresults_county_pfna.png", units = "in", height = 9, width = 12)
+
+
+### PFHxS
+
+pa_pfas_sampling_pfhxs <- pa_pfas_sampling %>% 
+  filter(contaminant == "pfhxs" & analyticalresultssign == "=") %>% 
+  arrange(pws_id, collectiondate, sampleid)
+
+pa_pfas_sampling_wide_pfhxs_pos <- pa_pfas_sampling_wide %>% 
+  filter(pfhxs_above_mrl_0_003 == 1) %>% 
+  dplyr::select(pws_id)
+
+pa_pfas_sampling$pws_id <- as.numeric(pa_pfas_sampling$pws_id) 
+
+pfhxs <- left_join(pa_pfas_sampling_wide_pfhxs_pos, pa_pfas_sampling, by = "pws_id") %>% 
+  filter(contaminant == "pfhxs") %>% 
+  dplyr::select(pws_id, collectiondate, analyticalresultvalue, data_source, samplepointname) %>% 
+  arrange(pws_id, samplepointname, collectiondate)
+
+pfhxs <-left_join(
+  pfhxs,
+  pfhxs %>% 
+    arrange(pws_id, samplepointname) %>%
+    distinct(pws_id, samplepointname) %>%
+    group_by(pws_id) %>% 
+    mutate(sample_location = row_number())
+  ,
+  by = c("pws_id","samplepointname")
+)
+
+pfhxs <-left_join(
+  pfhxs,
+  pfhxs %>% 
+    arrange(pws_id, samplepointname, collectiondate) %>%
+    distinct(pws_id, samplepointname, collectiondate) %>%
+    group_by(pws_id, samplepointname) %>% 
+    mutate(sample_location_date = row_number())
+  ,
+  by = c("pws_id","samplepointname", "collectiondate")
+) %>% 
+  mutate(analyticalresultvalue = ifelse(is.na(analyticalresultvalue), 0.003, as.character(analyticalresultvalue)))
+
+pfhxs_cnty <- left_join(pfhxs, dplyr::select(pws %>% mutate(PWS_ID = as.numeric(PWS_ID)), PWS_ID, CNTY_NA), by = c("pws_id" = "PWS_ID"))
+
+pfhxs_cnty <- pfhxs_cnty %>%
+  st_drop_geometry()
+#  dplyr::select(-geoms)
+
+subset1 <- pfhxs_cnty %>%
+  filter(mdy(collectiondate) >= as.Date("2013-01-01") & mdy(collectiondate) <= as.Date("2015-12-31"))
+
+subset2 <- pfhxs_cnty %>%
+  filter(mdy(collectiondate) >= as.Date("2020-01-01") & mdy(collectiondate) <= as.Date("2021-02-01"))
+
+subset3 <- pfhxs_cnty %>%
+  filter(mdy(collectiondate) >= as.Date("2023-01-01") & mdy(collectiondate) <= as.Date("2023-06-01"))
+
+# Combine the subsets into a single data frame with an identifier for each subset
+subset1$subset <- "Subset 1"
+subset2$subset <- "Subset 2"
+subset3$subset <- "Subset 3"
+
+combined_data <- rbind(subset1, subset2, subset3)
+
+ggplot(combined_data, aes(x = mdy(collectiondate), y = as.numeric(analyticalresultvalue), color = factor(ifelse(analyticalresultvalue > 0.003, "above", ifelse(analyticalresultvalue == 0.003, "equal", "below"))))) +
+  geom_point(size = 2) +
+  geom_hline(yintercept = 0.003, linetype = "dashed", color = "red") +
+  labs(x = "Date", y = "PFHxS Detected Value", title = "PFHxS Sampling Results by Data Source and County (MRL = 0.003)") +
+  scale_x_date(date_labels = "%b %Y") +
+  scale_y_continuous(labels = function(x) sprintf("%.4f", x)) +
+  facet_grid(CNTY_NA ~ subset, scales = "free", switch = "y",
+             labeller = labeller(subset = c("Subset 1" = "UCMR 3", "Subset 2" = "PA DEP", "Subset 3" = "UCMR 5"))) +  # Facet by CNTY_NAME and subsets in grid format
+  scale_color_manual(values = c("above" = "red", "below" = "green", "equal" = "darkgrey"),
+                     labels = c("above" = "Above MRL", "below" = "Below MRL", "equal" = "Equal to MRL")) +  # Change legend labels
+  theme(
+    axis.text.x = element_text(size = 11, angle = 45, hjust = 1, family = "Arial"),  # Rotate x-axis labels and set font
+    strip.text.y = element_text(size = 11),
+    strip.text.x.top = element_text(size = 11),
+    legend.position = "bottom", legend.title = element_blank(),
+    plot.title = element_text(hjust = 0.5),
+    panel.background = element_rect(fill = "white", color = "black"),  # Set plot and panel background
+    strip.background = element_rect(fill = "white"),  # Set strip (row and column label) background
+    strip.placement = "outside",  # Place strip labels outside the plot
+    text = element_text(family = "Arial", color = "black"),
+    panel.spacing = unit(0.25, "cm", data = NULL)
+  )
+
+ggsave("/Users/rsnead91/Documents/Personal/Work/Jobs/PFAS + Cancer/PFAS_sites/02_output/samplingresults_county_pfhxs.png", units = "in", height = 9, width = 12)
+
+### PFHpA
+
+pa_pfas_sampling_pfhpa <- pa_pfas_sampling %>% 
+  filter(contaminant == "pfhpa" & analyticalresultssign == "=") %>% 
+  arrange(pws_id, collectiondate, sampleid)
+
+pa_pfas_sampling_wide_pfhpa_pos <- pa_pfas_sampling_wide %>% 
+  filter(pfhpa_above_mrl_0_003 == 1) %>% 
+  dplyr::select(pws_id)
+
+pa_pfas_sampling$pws_id <- as.numeric(pa_pfas_sampling$pws_id) 
+
+pfhpa <- left_join(pa_pfas_sampling_wide_pfhpa_pos, pa_pfas_sampling, by = "pws_id") %>% 
+  filter(contaminant == "pfhpa") %>% 
+  dplyr::select(pws_id, collectiondate, analyticalresultvalue, data_source, samplepointname) %>% 
+  arrange(pws_id, samplepointname, collectiondate)
+
+pfhpa <-left_join(
+  pfhpa,
+  pfhpa %>% 
+    arrange(pws_id, samplepointname) %>%
+    distinct(pws_id, samplepointname) %>%
+    group_by(pws_id) %>% 
+    mutate(sample_location = row_number())
+  ,
+  by = c("pws_id","samplepointname")
+)
+
+pfhpa <-left_join(
+  pfhpa,
+  pfhpa %>% 
+    arrange(pws_id, samplepointname, collectiondate) %>%
+    distinct(pws_id, samplepointname, collectiondate) %>%
+    group_by(pws_id, samplepointname) %>% 
+    mutate(sample_location_date = row_number())
+  ,
+  by = c("pws_id","samplepointname", "collectiondate")
+) %>% 
+  mutate(analyticalresultvalue = ifelse(is.na(analyticalresultvalue), 0.003, as.character(analyticalresultvalue)))
+
+pfhpa_cnty <- left_join(pfhpa, dplyr::select(pws %>% mutate(PWS_ID = as.numeric(PWS_ID)), PWS_ID, CNTY_NA), by = c("pws_id" = "PWS_ID"))
+
+pfhpa_cnty <- pfhpa_cnty %>%
+  st_drop_geometry()
+#  dplyr::select(-geoms)
+
+subset1 <- pfhpa_cnty %>%
+  filter(mdy(collectiondate) >= as.Date("2013-01-01") & mdy(collectiondate) <= as.Date("2015-12-31"))
+
+subset2 <- pfhpa_cnty %>%
+  filter(mdy(collectiondate) >= as.Date("2020-01-01") & mdy(collectiondate) <= as.Date("2021-02-01"))
+
+subset3 <- pfhpa_cnty %>%
+  filter(mdy(collectiondate) >= as.Date("2023-01-01") & mdy(collectiondate) <= as.Date("2023-06-01"))
+
+# Combine the subsets into a single data frame with an identifier for each subset
+subset1$subset <- "Subset 1"
+subset2$subset <- "Subset 2"
+subset3$subset <- "Subset 3"
+
+combined_data <- rbind(subset1, subset2, subset3)
+
+ggplot(combined_data, aes(x = mdy(collectiondate), y = as.numeric(analyticalresultvalue), color = factor(ifelse(analyticalresultvalue > 0.003, "above", ifelse(analyticalresultvalue == 0.003, "equal", "below"))))) +
+  geom_point(size = 2) +
+  geom_hline(yintercept = 0.003, linetype = "dashed", color = "red") +
+  labs(x = "Date", y = "PFHpA Detected Value", title = "PFHpA Sampling Results by Data Source and County (MRL = 0.003)") +
+  scale_x_date(date_labels = "%b %Y") +
+  scale_y_continuous(labels = function(x) sprintf("%.4f", x)) +
+  facet_grid(CNTY_NA ~ subset, scales = "free", switch = "y",
+             labeller = labeller(subset = c("Subset 1" = "UCMR 3", "Subset 2" = "PA DEP", "Subset 3" = "UCMR 5"))) +  # Facet by CNTY_NAME and subsets in grid format
+  scale_color_manual(values = c("above" = "red", "below" = "green", "equal" = "darkgrey"),
+                     labels = c("above" = "Above MRL", "below" = "Below MRL", "equal" = "Equal to MRL")) +  # Change legend labels
+  theme(
+    axis.text.x = element_text(size = 11, angle = 45, hjust = 1, family = "Arial"),  # Rotate x-axis labels and set font
+    strip.text.y = element_text(size = 11),
+    strip.text.x.top = element_text(size = 11),
+    legend.position = "bottom", legend.title = element_blank(),
+    plot.title = element_text(hjust = 0.5),
+    panel.background = element_rect(fill = "white", color = "black"),  # Set plot and panel background
+    strip.background = element_rect(fill = "white"),  # Set strip (row and column label) background
+    strip.placement = "outside",  # Place strip labels outside the plot
+    text = element_text(family = "Arial", color = "black"),
+    panel.spacing = unit(0.25, "cm", data = NULL)
+  )
+
+ggsave("/Users/rsnead91/Documents/Personal/Work/Jobs/PFAS + Cancer/PFAS_sites/02_output/samplingresults_county_pfhpa.png", units = "in", height = 9, width = 12)
+
+
+### PFBS
+
+pa_pfas_sampling_pfbs <- pa_pfas_sampling %>% 
+  filter(contaminant == "pfbs" & analyticalresultssign == "=") %>% 
+  arrange(pws_id, collectiondate, sampleid)
+
+pa_pfas_sampling_wide_pfbs_pos <- pa_pfas_sampling_wide %>% 
+  filter(pfbs_above_mrl_0_003 == 1) %>% 
+  dplyr::select(pws_id)
+
+pa_pfas_sampling$pws_id <- as.numeric(pa_pfas_sampling$pws_id) 
+
+pfbs <- left_join(pa_pfas_sampling_wide_pfbs_pos, pa_pfas_sampling, by = "pws_id") %>% 
+  filter(contaminant == "pfbs") %>% 
+  dplyr::select(pws_id, collectiondate, analyticalresultvalue, data_source, samplepointname) %>% 
+  arrange(pws_id, samplepointname, collectiondate)
+
+pfbs <-left_join(
+  pfbs,
+  pfbs %>% 
+    arrange(pws_id, samplepointname) %>%
+    distinct(pws_id, samplepointname) %>%
+    group_by(pws_id) %>% 
+    mutate(sample_location = row_number())
+  ,
+  by = c("pws_id","samplepointname")
+)
+
+pfbs <-left_join(
+  pfbs,
+  pfbs %>% 
+    arrange(pws_id, samplepointname, collectiondate) %>%
+    distinct(pws_id, samplepointname, collectiondate) %>%
+    group_by(pws_id, samplepointname) %>% 
+    mutate(sample_location_date = row_number())
+  ,
+  by = c("pws_id","samplepointname", "collectiondate")
+) %>% 
+  mutate(analyticalresultvalue = ifelse(is.na(analyticalresultvalue), 0.003, as.character(analyticalresultvalue)))
+
+pfbs_cnty <- left_join(pfbs, dplyr::select(pws %>% mutate(PWS_ID = as.numeric(PWS_ID)), PWS_ID, CNTY_NA), by = c("pws_id" = "PWS_ID"))
+
+pfbs_cnty <- pfbs_cnty %>%
+  st_drop_geometry()
+#  dplyr::select(-geoms)
+
+subset1 <- pfbs_cnty %>%
+  filter(mdy(collectiondate) >= as.Date("2013-01-01") & mdy(collectiondate) <= as.Date("2015-12-31"))
+
+subset2 <- pfbs_cnty %>%
+  filter(mdy(collectiondate) >= as.Date("2020-01-01") & mdy(collectiondate) <= as.Date("2021-02-01"))
+
+subset3 <- pfbs_cnty %>%
+  filter(mdy(collectiondate) >= as.Date("2023-01-01") & mdy(collectiondate) <= as.Date("2023-06-01"))
+
+# Combine the subsets into a single data frame with an identifier for each subset
+subset1$subset <- "Subset 1"
+subset2$subset <- "Subset 2"
+subset3$subset <- "Subset 3"
+
+combined_data <- rbind(subset1, subset2, subset3)
+
+ggplot(combined_data, aes(x = mdy(collectiondate), y = as.numeric(analyticalresultvalue), color = factor(ifelse(analyticalresultvalue > 0.003, "above", ifelse(analyticalresultvalue == 0.003, "equal", "below"))))) +
+  geom_point(size = 2) +
+  geom_hline(yintercept = 0.003, linetype = "dashed", color = "red") +
+  labs(x = "Date", y = "PFBS Detected Value", title = "PFBS Sampling Results by Data Source and County (MRL = 0.003)") +
+  scale_x_date(date_labels = "%b %Y") +
+  scale_y_continuous(labels = function(x) sprintf("%.4f", x)) +
+  facet_grid(CNTY_NA ~ subset, scales = "free", switch = "y",
+             labeller = labeller(subset = c("Subset 1" = "UCMR 3", "Subset 2" = "PA DEP", "Subset 3" = "UCMR 5"))) +  # Facet by CNTY_NAME and subsets in grid format
+  scale_color_manual(values = c("above" = "red", "below" = "green", "equal" = "darkgrey"),
+                     labels = c("above" = "Above MRL", "below" = "Below MRL", "equal" = "Equal to MRL")) +  # Change legend labels
+  theme(
+    axis.text.x = element_text(size = 11, angle = 45, hjust = 1, family = "Arial"),  # Rotate x-axis labels and set font
+    strip.text.y = element_text(size = 11),
+    strip.text.x.top = element_text(size = 11),
+    legend.position = "bottom", legend.title = element_blank(),
+    plot.title = element_text(hjust = 0.5),
+    panel.background = element_rect(fill = "white", color = "black"),  # Set plot and panel background
+    strip.background = element_rect(fill = "white"),  # Set strip (row and column label) background
+    strip.placement = "outside",  # Place strip labels outside the plot
+    text = element_text(family = "Arial", color = "black"),
+    panel.spacing = unit(0.25, "cm", data = NULL)
+  )
+
+ggsave("/Users/rsnead91/Documents/Personal/Work/Jobs/PFAS + Cancer/PFAS_sites/02_output/samplingresults_county_pfbs.png", units = "in", height = 9, width = 12)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# Calculate distance from the centroid of each PWS to each known/susptected?
+# Make a centroid for ridge run
+
+pws <- st_read("00_data/pws.shp")
+
+pws_pfas <- st_read("00_data/pws.shp.pfas.shp")
+
+pws_pfas <- st_read("00_data/pws_pfastested.shp")
+
+pws_pfas_centroids <- st_read("00_data/pws_pfas_centroids.shp")
+
+study_counties <- st_read("00_data/study_counties.shp")
+
+susp_pfas_manufacturing <- st_read("00_data/susp_pfas_manufacturing.shp") %>% mutate(type = "manufacturing", pfas = "suspected")
+susp_pfas_landfills <- st_read("00_data/susp_pfas_landfills.shp") %>% mutate(type = "landfills", pfas = "suspected")
+susp_pfas_firefighter_training <- st_read("00_data/susp_pfas_firefighter_training.shp") %>% mutate(type = "firefighter_training", pfas = "suspected")
+susp_pfas_airports <- st_read("00_data/susp_pfas_airports.shp") %>% mutate(type = "manufacturing", pfas = "airports")
+known_pfas_superfund_sites <- st_read("00_data/known_pfas_superfund_sites.shp")
+known_pfas_hsca_sites <- st_read("00_data/known_pfas_hsca_sites.shp")
+known_pfas_neshaminy_creek_watershed <- st_read("00_data/known_pfas_neshaminy_creek_watershed.shp")
+known_pfas_ridge_run <- st_read("00_data/known_pfas_ridge_run.shp")
+known_pfas_discharge <- st_read("00_data/known_pfas_discharge.shp")
+
+pws_pfas_centroids <- st_centroid(st_as_sf(pws_pfastested))
+# st_write(pws_pfas_centroids, "00_data/pws_pfas_centroids.shp", append = FALSE)
+
+pfas_sites <- rbind(
+  susp_pfas_manufacturing %>% 
+    dplyr::select(geometry) %>% 
+    mutate(type = "manufacturing", pfas = "suspected"),
+  susp_pfas_landfills %>% 
+    dplyr::select(geometry) %>% 
+    mutate(type = "landfills", pfas = "suspected"),  
+  susp_pfas_firefighter_training %>% 
+    dplyr::select(geometry) %>% 
+    mutate(type = "firefighter_training", pfas = "suspected"), 
+  susp_pfas_airports %>% 
+    dplyr::select(geometry) %>% 
+    mutate(type = "airports", pfas = "suspected"),
+  known_pfas_superfund_sites %>% 
+    dplyr::select(geometry) %>% 
+    mutate(type = "superfund", pfas = "known"),
+  known_pfas_hsca_sites %>% 
+    dplyr::select(geometry) %>% 
+    mutate(type = "hsca", pfas = "known"),
+  # known_pfas_neshaminy_creek_watershed %>% 
+  #   dplyr::select(geometry) %>% 
+  #   mutate(type = "neshaminy_creek", pfas = "known"),
+  known_pfas_ridge_run %>% 
+    dplyr::select(geometry) %>% 
+    mutate(type = "ridge_run", pfas = "known"),
+  known_pfas_discharge %>% 
+    dplyr::select(geometry) %>% 
+    mutate(type = "landfill", pfas = "known")
+)
+
+known_pfas_sites <- rbind(
+  known_pfas_superfund_sites %>% 
+    dplyr::select(name, geometry) %>% 
+    mutate(type = "superfund", pfas = "known"),
+  known_pfas_hsca_sites %>% 
+    dplyr::select(name, geometry) %>% 
+    mutate(type = "hsca", pfas = "known"),
+  # known_pfas_neshaminy_creek_watershed %>% 
+  #   dplyr::select(geometry) %>% 
+  #   mutate(type = "neshaminy_creek", pfas = "known"),
+  known_pfas_ridge_run %>% 
+    dplyr::select(name, geometry) %>% 
+    mutate(type = "ridge_run", pfas = "known"),
+  known_pfas_discharge %>% 
+    dplyr::select(name, geometry) %>% 
+    mutate(type = "landfill", pfas = "known")
+)
+
+ggplot() +
+  geom_sf(data = study_counties, fill = "grey97", color = "black", linewidth = 0.6) +
+  geom_sf(data = pws_pfas_centroids, color = "red") +
+  geom_sf(data = pfas_sites, color = "black")  
+
+
+# known pfas dist
+pws_known_pfas_dist <- data.frame()
+for (i in 1:nrow(pws_pfas_centroids)) {
+  for (ii in 1:nrow(known_pfas_sites)) {
+    dist_df <- st_distance(pws_pfas_centroids[i,], known_pfas_sites[ii,]) %>% units::set_units(ft) %>% round(0) %>% drop_units()  
+    int_df <- cbind(
+      pws_pfas_centroids[i,"pws_id"] %>% st_drop_geometry(),
+      pws_pfas_centroids[i,] %>% st_coordinates(),
+      known_pfas_sites[ii,c("name","type","pfas")] %>% st_drop_geometry(),
+      known_pfas_sites[ii,] %>% st_coordinates(),
+      dist_df
+    )
+    pws_known_pfas_dist <- rbind(pws_known_pfas_dist, int_df)
+    }
+}
+colnames(pws_known_pfas_dist) <- c("pwsid","pws_long","pws_lat","name","type","pfas","source_long","source_lat","dist_ft")
+save(pws_known_pfas_dist, file="00_data/pws_known_pfas_dist.Rdata")
+
+# susp pfas dist - airports
+pws_susp_pfas_airports_dist <- data.frame()
+for (i in 1:nrow(pws_pfas_centroids)) {
+  for (ii in 1:nrow(susp_pfas_airports)) {
+    dist_df <- st_distance(pws_pfas_centroids[i,], susp_pfas_airports[ii,]) %>% units::set_units(ft) %>% round(0) %>% drop_units()  
+    int_df <- cbind(
+      pws_pfas_centroids[i,"pws_id"] %>% st_drop_geometry(),
+      pws_pfas_centroids[i,] %>% st_coordinates(),
+      susp_pfas_airports[ii,c("NAME","type","pfas")] %>% st_drop_geometry(),
+      susp_pfas_airports[ii,] %>% st_coordinates(),
+      dist_df
+    )
+    pws_susp_pfas_airports_dist <- rbind(pws_susp_pfas_airports_dist, int_df)
+  }
+}
+colnames(pws_susp_pfas_airports_dist) <- c("pwsid","pws_long","pws_lat","name","type","pfas","source_long","source_lat","dist_ft")
+save(pws_susp_pfas_airports_dist, file="00_data/pws_susp_pfas_airports_dist.Rdata")
+
+
+# susp pfas dist - landfills
+pws_susp_pfas_landfills_dist <- list()  
+
+pws_vec <- 1:134
+landfill_vec <- 1:1939
+
+dist_fun <- function(i, ii){
+  dist_df <- st_distance(pws_pfas_centroids[i,], susp_pfas_landfills[ii,]) %>% 
+    units::set_units(ft) %>% 
+    round(0) %>% 
+    drop_units()  
+  int_df <- cbind(
+    pws_pfas_centroids[i,"pws_id"] %>% st_drop_geometry(),
+    pws_pfas_centroids[i,] %>% st_coordinates(),
+    susp_pfas_landfills[ii,c("SITE_NAME","type","pfas")] %>% st_drop_geometry(),
+    susp_pfas_landfills[ii,] %>% st_coordinates(),
+    dist_df
+  )
+  return(int_df)
+}
+
+pws_susp_pfas_landfills_dist <- lapply(pws_vec, function(i) {
+  inner_list <- lapply(landfill_vec, function(ii) dist_fun(i, ii))
+  return(inner_list)
+})
+
+pws_susp_pfas_landfills_dist_df <- data.frame()
+
+for (i in 1:134){
+  int_df <- as.data.frame(do.call(rbind, pws_susp_pfas_landfills_dist[[i]]))
+  pws_susp_pfas_landfills_dist_df <- rbind(pws_susp_pfas_landfills_dist_df, int_df)
+}
+
+colnames(pws_susp_pfas_landfills_dist_df) <- c("pwsid","pws_long","pws_lat","name","type","pfas","source_long","source_lat","dist_ft")
+pws_susp_pfas_landfills_dist_df <- pws_susp_pfas_landfills_dist_df %>% dplyr::arrange(pwsid, dist_ft)
+save(pws_susp_pfas_landfills_dist, file="00_data/pws_susp_pfas_landfills_dist.Rdata")
+
+
+# susp pfas dist - manufacturing
+pws_susp_pfas_manufacturing_dist <- data.frame()
+for (i in 1:nrow(pws_pfas_centroids)) {
+  for (ii in 1:nrow(susp_pfas_manufacturing)) {
+    dist_df <- st_distance(pws_pfas_centroids[i,], susp_pfas_manufacturing[ii,]) %>% units::set_units(ft) %>% round(0) %>% drop_units()  
+    int_df <- cbind(
+      pws_pfas_centroids[i,"pws_id"] %>% st_drop_geometry(),
+      pws_pfas_centroids[i,] %>% st_coordinates(),
+      susp_pfas_manufacturing[ii,c("PRIMARY","type","pfas")] %>% st_drop_geometry(),
+      susp_pfas_manufacturing[ii,] %>% st_coordinates(),
+      dist_df
+    )
+    pws_susp_pfas_manufacturing_dist <- rbind(pws_susp_pfas_manufacturing_dist, int_df)
+  }
+}
+colnames(pws_susp_pfas_manufacturing_dist) <- c("pwsid","pws_long","pws_lat","name","type","pfas","source_long","source_lat","dist_ft")
+save(pws_susp_pfas_manufacturing_dist, file="00_data/pws_susp_pfas_manufacturing_dist.Rdata")
+
+
+# susp pfas dist - firefighter training
+pws_susp_pfas_firefighter_training_dist <- data.frame()
+for (i in 1:nrow(pws_pfas_centroids)) {
+  for (ii in 1:nrow(susp_pfas_firefighter_training)) {
+    dist_df <- st_distance(pws_pfas_centroids[i,], susp_pfas_firefighter_training[ii,]) %>% units::set_units(ft) %>% round(0) %>% drop_units()  
+    int_df <- cbind(
+      pws_pfas_centroids[i,"pws_id"] %>% st_drop_geometry(),
+      pws_pfas_centroids[i,] %>% st_coordinates(),
+      susp_pfas_firefighter_training[ii,c("type","pfas")] %>% st_drop_geometry(),
+      susp_pfas_firefighter_training[ii,] %>% st_coordinates(),
+      dist_df
+    )
+    pws_susp_pfas_firefighter_training_dist <- rbind(pws_susp_pfas_firefighter_training_dist, int_df)
+  }
+}
+colnames(pws_susp_pfas_firefighter_training_dist) <- c("pwsid","pws_long","pws_lat","type","pfas","source_long","source_lat","dist_ft")
+pws_susp_pfas_firefighter_training_dist$name <- NA
+pws_susp_pfas_firefighter_training_dist <- pws_susp_pfas_firefighter_training_dist %>% 
+  dplyr::select(pwsid, pws_long, pws_lat, name, type, pfas, source_long, source_lat, dist_ft)
+save(pws_susp_pfas_firefighter_training_dist, file="00_data/pws_susp_pfas_firefighter_training_dist.Rdata")
+
+
+
+
+# output full excel
+excel_list <- list(
+  "pws_known_pfas_dist" = pws_known_pfas_dist %>% dplyr::arrange(pwsid, dist_ft),
+  "pws_susp_pfas_airports_dist" = pws_susp_pfas_airports_dist %>% dplyr::arrange(pwsid, dist_ft),
+  "pws_susp_pfas_firefighter_dist" = pws_susp_pfas_firefighter_training_dist %>% dplyr::arrange(pwsid, dist_ft),
+  "pws_susp_pfas_manufactur_dist" = pws_susp_pfas_manufacturing_dist %>% dplyr::arrange(pwsid, dist_ft),
+  "pws_susp_pfas_landfills_dist" = pws_susp_pfas_landfills_dist_df %>% dplyr::arrange(pwsid, dist_ft)
+)
+
+openxlsx::write.xlsx(excel_list, file = "00_data/pws_to_sites_dist.xlsx")
+
+
+
+
+
+
+# pws # population served
+
+
+pws_popserved <- rbind(
+  read_excel("00_data/berks_sdwis.xlsx"),
+  read_excel("00_data/bucks_sdwis.xlsx"),
+  read_excel("00_data/carbon_sdwis.xlsx"),
+  read_excel("00_data/chester_sdwis.xlsx"),
+  read_excel("00_data/delaware_sdwis.xlsx"),
+  read_excel("00_data/lancaster_sdwis.xlsx"),
+  read_excel("00_data/lebanon_sdwis.xlsx"),
+  read_excel("00_data/lehigh_sdwis.xlsx"),
+  read_excel("00_data/monroe_sdwis.xlsx"),
+  read_excel("00_data/montgomery_sdwis.xlsx"),
+  read_excel("00_data/northampton_sdwis.xlsx"),
+  read_excel("00_data/schuylkill_sdwis.xlsx")
+)
+
+colnames(pws_popserved) <- c("water_system_name","county","del1","pop_served","primary_water_source","del2","pwsid")
+
+pws_popserved <- pws_popserved %>% 
+  dplyr::select(-starts_with("del"))
+  
+pws_popserved$pwsid <- as.numeric(sub("PA","", pws_popserved$pwsid))
+
+pws_popserved <- left_join(pws_pfas_centroids[,"pws_id"], pws_popserved, by = c("pws_id" = "pwsid")) %>% st_drop_geometry()
+
+colnames(pws_popserved)[1] <- "pwsid"
+
+openxlsx::write.xlsx(pws_popserved, file = "00_data/pws_popserved.xlsx")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
