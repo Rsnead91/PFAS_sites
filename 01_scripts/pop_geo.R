@@ -227,7 +227,7 @@ table(rel_2010_2020_agg$area_sum)
 view(rel_2010_2020[rel_2010_2020$GEOID_TRACT_20 %in% c("42097082300","42101980002","42101012203"),])
 
 
-# convert 2000 ct to 2020 ct ----
+# 3. convert 2000 ct to 2020 ct ----
 
 # DECENNIAL
 # 2000 -> 2010

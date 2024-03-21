@@ -116,7 +116,7 @@ neshaminy_creek <- cbind(neshaminy_union,neshaminy_creek2) %>%
                     dplyr::select(name,county,site,type,groundwater,surface_water,electronic_manufacturing,active)
 
 # saving shp
-st_write(neshaminy_creek, dsn = "00_data/known_pfas_neshaminy_creek_watershed.shp")
+# st_write(neshaminy_creek, dsn = "00_data/known_pfas_neshaminy_creek_watershed.shp")
 
 
 ### 2.2.4 ridge run - east and west rockhill townships, bucks county ----
@@ -150,7 +150,7 @@ ridge_run <- cbind(ridge_run_union,ridge_run2) %>%
               dplyr::select(-FIPS_COUNT)
 
 # saving shp
-st_write(ridge_run, dsn = "00_data/known_pfas_ridge_run.shp")
+# st_write(ridge_run, dsn = "00_data/known_pfas_ridge_run.shp")
 
 
 ### 2.2.5 facilities with pfas discharge ----
@@ -176,12 +176,15 @@ facilities_discharge_pfas2 <- data.frame(
 facilities_discharge_pfas <- cbind(facilities_discharge_pfas,facilities_discharge_pfas2)
 
 # saving shp
-st_write(facilities_discharge_pfas, dsn = "00_data/known_pfas_discharge.shp")
+# st_write(facilities_discharge_pfas, dsn = "00_data/known_pfas_discharge.shp")
 
 
 ## 2.3 suspected pfas ----
 
 ### 2.3.1 airports ----
+# https://adds-faa.opendata.arcgis.com/
+# https://adds-faa.opendata.arcgis.com/datasets/airports-1/explore
+# https://adds-faa.opendata.arcgis.com/datasets/e747ab91a11045e8b3f8a3efd093d3b5_0/explore?location=41.085262%2C-76.795890%2C7.82&showTable=true
 
 airports_public_raw <- st_as_sf(
                         read_excel("00_data/pa_public_airports.xlsx"),
@@ -238,7 +241,7 @@ landfill_residual <- st_make_valid(landfill_residual)
 
 landfill <- rbind(landfill_municipality,landfill_residual)
 
-st_write(landfill, dsn = "/Users/rsnead91/Documents/Personal/Work/Teaching/Course Development/Spatial Analysis Course/Class Prep/Modules/module11/pa_landfills.shp")
+# st_write(landfill, dsn = "/Users/rsnead91/Documents/Personal/Work/Teaching/Course Development/Spatial Analysis Course/Class Prep/Modules/module11/pa_landfills.shp")
 
 # spatial join
 
@@ -253,20 +256,73 @@ landfill_studyarea <- st_intersection(
 
 ### 2.3.4 EPA's envirofacts facilities registry: potential sources of PFAS ----
 
-manufacturing <- st_as_sf(
-                  filter(read_excel("00_data/envirofacts_studyarea.xlsx"), !is.na(LONGITUDE83)),
-                  coords = c("LONGITUDE83","LATITUDE83")
-                ) %>% 
-                  st_set_crs(st_crs(4269)) %>% # set coordinate system to match other geo files
-                  st_transform(crs = 4269) # set projection to match other geo files
+# not all manufacturing sites had SIC codes
 
+# manufacturing <- st_as_sf(
+#                   filter(read_excel("00_data/envirofacts_studyarea.xlsx"), !is.na(LONGITUDE83)),
+#                   coords = c("LONGITUDE83","LATITUDE83")
+#                 ) %>%
+#                   st_set_crs(st_crs(4269)) %>% # set coordinate system to match other geo files
+#                   st_transform(crs = 4269) # set projection to match other geo files
+
+
+manufacturing_geo <- st_as_sf(
+  read_excel(path = "00_data/all_pa_manufacturing_RTI_SICcodes_20240306.xlsx", sheet = "final_sic_reduced_geo"),
+  coords = c("LONGITUDE83","LATITUDE83")
+) %>% 
+  clean_names() %>% 
+  dplyr::select(registry_id, sic_codes, primary_name, location_address, city_name, county_name, postal_code, fips_code) %>% 
+  st_set_crs(st_crs(4269)) %>% # set coordinate system to match other geo files
+  st_transform(crs = 4269) # set projection to match other geo files
+
+manufacturing_nogeo <- read_excel(path = "00_data/all_pa_manufacturing_RTI_SICcodes_20240306.xlsx", sheet = "final_sic_reduced_nogeo") %>% 
+  clean_names() %>% 
+  dplyr::select(registry_id, sic_codes, primary_name, location_address, city_name, county_name, postal_code, fips_code)
+
+# geocoded to zipcode centroid
+manufacturing_nogeo_to_geo <- st_as_sf(
+  geocode(manufacturing_nogeo,
+    # street = location_address,
+    city = city_name,
+    county = county_name,
+    postalcode = postal_code,
+    method = "osm",
+    lat = latitude83,
+    long = longitude83),
+  coords = c("longitude83","latitude83")
+  ) %>% 
+  st_set_crs(st_crs(4269)) %>% # set coordinate system to match other geo files
+  st_transform(crs = 4269) # set projection to match other geo files
+
+manufacturing_nogeo_to_geo$postal_code <- as.character(manufacturing_nogeo_to_geo$postal_code)
+
+manufacturing_nogeo_to_geo$fips_code <- as.character(manufacturing_nogeo_to_geo$fips_code)
+
+# retaining all geocoded data actually within the study area
 manufacturing <- st_intersection(
-  x = manufacturing,
+  x = bind_rows(manufacturing_geo, manufacturing_nogeo_to_geo),
   y = study_counties
 )
 
+# reducing number of variables and duplicate locations
+manufacturing <- manufacturing %>% 
+  dplyr::select(sic_codes, primary_name, location_address, city_name, county_name, postal_code) %>% #registry_id,
+  distinct_all(.keep_all = TRUE)
+
+# manually removing duplicate not being picked up by distinct function
+# checking for overlapping points: view(manufacturing2[order(st_coordinates(manufacturing2)[,"X"], st_coordinates(manufacturing2)[,"Y"]),])
+manufacturing <- manufacturing[-c(1,29,44,51,78,96,103,117,123),]
+
+
 # saving shp
 # st_write(manufacturing, dsn = "00_data/susp_pfas_manufacturing.shp")
+# st_write(manufacturing, dsn = "00_data/susp_pfas_manufacturing_20240306.shp")
+
+manufacturing_xy <- manufacturing %>% cbind(st_coordinates(.)) %>% 
+  rename("long" = "X", "lat" = "Y") %>% 
+  st_drop_geometry()
+
+# write_csv(manufacturing_xy, "00_data/susp_pfas_manufacturing_20240306.csv")
 
 
 ## 2.4 possible PWS wells/intakes ----
@@ -609,7 +665,7 @@ dep_sampling_2019_2020_2021 <- rbind(dep_sampling_2019, dep_sampling_2020, dep_s
 
 ucmr3 <- read_tsv("00_data/UCMR3_ALL_MA_WY.txt") %>% 
   filter(State == "PA" & Contaminant %in% c("PFHpA", "PFHxS", "PFNA", "PFOA", "PFOS", "PFBS")) %>% 
-#  dplyr::select(PWSID, CollectionDate, Contaminant, SampleID, SamplePointName, FacilityWaterType, MRL, AnalyticalResultsSign, AnalyticalResultValue) %>% 
+ dplyr::select(PWSID, CollectionDate, Contaminant, SampleID, SamplePointName, FacilityWaterType, MRL, AnalyticalResultsSign, AnalyticalResultValue) %>%
   mutate(
     PWSID = substr(PWSID,3,10),
     Contaminant = tolower(Contaminant)
@@ -617,25 +673,37 @@ ucmr3 <- read_tsv("00_data/UCMR3_ALL_MA_WY.txt") %>%
 
 colnames(ucmr3) <- tolower(colnames(ucmr3))
 
-nrow(
-  ucmr3 %>% 
-    filter(state == "PA" & contaminant == "pfoa") %>% 
-    dplyr::select(pwsid, sampleid)
-)
+# nrow(
+#   ucmr3 %>% 
+#     filter(state == "PA" & contaminant == "pfoa") %>% 
+#     dplyr::select(pwsid, sampleid)
+# )
 
 ### 2.6.3 ucmr 5 ----
 
 # the following chems are in dep sampling but not ucmr 5: netfosaa, nmefosaa, pfta, pftrda
 # the following chems are in ucmr 5 but not dep sampling: pfpea, pfpes, pfmba, pfmpa, pfhps, pfeesa, pfba, nfdha, x4_2_fts, x6_2_fts, x8_2_fts
 
-ucmr5 <- read_tsv("00_data/UCMR5_ALL_MA_WY.txt") %>% 
+# ucmr5_old <- read_tsv("00_data/UCMR5_ALL_MA_WY_old.txt") %>% 
+#   filter(State == "PA" & Contaminant != "lithium") %>% 
+#   #          dplyr::select(PWSID, CollectionDate, Contaminant, SampleID, SamplePointName, FacilityWaterType, MRL, AnalyticalResultsSign, AnalyticalResultValue) %>% 
+#   mutate(
+#     PWSID = substr(PWSID,3,10),
+#     Contaminant = tolower(Contaminant)
+#   ) %>% 
+#   dplyr::select(-c(UCMR1SampleType, Units))
+# 
+# colnames(ucmr5_old) <- tolower(colnames(ucmr5_old))
+
+ucmr5 <- read_tsv("00_data/UCMR5_ALL_MA_WY_20240315.txt") %>% 
           filter(State == "PA" & Contaminant != "lithium") %>% 
-#          dplyr::select(PWSID, CollectionDate, Contaminant, SampleID, SamplePointName, FacilityWaterType, MRL, AnalyticalResultsSign, AnalyticalResultValue) %>% 
+         dplyr::select(PWSID, CollectionDate, Contaminant, SampleID, SamplePointName, FacilityWaterType, MRL, AnalyticalResultsSign, AnalyticalResultValue) %>%
           mutate(
             PWSID = substr(PWSID,3,10),
             Contaminant = tolower(Contaminant)
-          ) %>% 
-  dplyr::select(-c(UCMR1SampleType, Units))
+          ) 
+# %>% 
+#   dplyr::select(-c(UCMR1SampleType, Units))
 
 colnames(ucmr5) <- tolower(colnames(ucmr5))
 
@@ -653,12 +721,19 @@ dep <- left_join(x=reduce_to_study_pwsid, y=dep_sampling_2019_2020_2021, by = c(
   mutate(data_source = "DEP")
 
 ## ucmr
+# ucmr_old <- left_join(x=reduce_to_study_pwsid, y=rbind(ucmr3,ucmr5_old), by = c("pws_id" = "pwsid")) %>% 
+#   drop_na(collectiondate) %>% 
+#   mutate(data_source = "UCMR") %>% 
+#   clean_names()
+
+
 ucmr <- left_join(x=reduce_to_study_pwsid, y=rbind(ucmr3,ucmr5), by = c("pws_id" = "pwsid")) %>% 
   drop_na(collectiondate) %>% 
   mutate(data_source = "UCMR") %>% 
   clean_names()
 
-st_write(st_as_sf(pws_pfastested %>% dplyr::select(pws_id, geometry)), "/Users/rsnead91/Documents/Personal/Work/Jobs/PFAS + Cancer/Population Estimates/01_data/pws_pfastested.shp", append = FALSE)
+
+# st_write(st_as_sf(pws_pfastested %>% dplyr::select(pws_id, geometry)), "/Users/rsnead91/Documents/Personal/Work/Jobs/PFAS + Cancer/Population Estimates/01_data/pws_pfastested.shp", append = FALSE)
 
 
 # pa_pfas_sampling_ucmr3dep <- rbind(
@@ -670,13 +745,12 @@ st_write(st_as_sf(pws_pfastested %>% dplyr::select(pws_id, geometry)), "/Users/r
 # )
 
 ## all pa pfas sampling
-pa_pfas_sampling <- rbind(
-                      cbind(
-                        dep,
-                        data.frame(sampleid = NA, samplepointname = NA, facilitywatertype = NA, mrl = NA, analyticalresultssign = NA)
-                      ),
-                      ucmr
-                      )
+
+dep <- cbind(dep, data.frame(sampleid = NA, samplepointname = NA, facilitywatertype = NA, mrl = NA, analyticalresultssign = NA))
+
+dep <- dep[,colnames(ucmr)]
+
+pa_pfas_sampling <- rbind(dep, ucmr)
 
 pa_pfas_sampling$collectiondate <- mdy(pa_pfas_sampling$collectiondate)
 
@@ -1297,6 +1371,9 @@ pa_pfas_sampling_wide[is.na(pa_pfas_sampling_wide)] <- 0
 
 
 
+openxlsx::write.xlsx(pa_pfas_sampling, file = "00_data/pa_pfas_sampling.xlsx")
+openxlsx::write.xlsx(pa_pfas_sampling_wide, file = "00_data/pa_pfas_sampling_wide.xlsx")
+
 
 
 
@@ -1308,19 +1385,19 @@ pa_pfas_sampling_wide_rti <- pa_pfas_sampling_wide %>%
 pa_pfas_sampling_rti <- pa_pfas_sampling %>% 
                           filter(contaminant %in% c("pfos","pfoa","pfna","pfhxs","pfhpa","pfbs"))
 
-write_csv(pa_pfas_sampling_wide_rti, file = "00_data/pa_pfas_sampling_wide_rti.csv")
-write_csv(pa_pfas_sampling_rti, file = "00_data/pa_pfas_sampling_rti.csv")
+# write_csv(pa_pfas_sampling_wide_rti, file = "00_data/pa_pfas_sampling_wide_rti.csv")
+# write_csv(pa_pfas_sampling_rti, file = "00_data/pa_pfas_sampling_rti.csv")
 
 pws_pfastested <- merge(
                     x = pa_pfas_sampling_wide,
                     y = pws %>% 
-                      dplyr::select(PWS_ID, NAME,CNTY_NA, GW_SOUR, SW_SOUR, INTCONN, OWNERSH),
+                      dplyr::select(PWS_ID, NAME, CNTY_NAME, GW_SOURCE, SW_SOURCE, INTCONNECT, OWNERSHIP),
                     by.x = "pws_id",
                     by.y = "PWS_ID",
                     keep.x = TRUE
                   )
   
-# st_write(pws_pfastested, dsn = "00_data/pws_pfastested.shp")
+# st_write(pws_pfastested, dsn = "00_data/pws_pfastested.shp", append = FALSE)
 
 
 # 5. calculate pws site density ----
@@ -1558,7 +1635,6 @@ zip(zipfile = "00_data/pfas_data_geo.zip",
 pfas_sum <- pa_pfas_sampling_wide[,c("num_samples",
                                      "num_sample_locations",
                                      "num_dates",
-                                     "num_gw",
                                      "num_contaminants_tested",
                                      "any_contaminants_above_mrl",
                                      "num_contaminants_above_mrl")]
@@ -1575,8 +1651,8 @@ write_csv(pfas_sum_ds, file = "00_data/pfas_sum_ds.csv")
 
 prop.table(table(pa_pfas_sampling_wide$pfas_detected_4cat))
 
-sum(ifelse(pa_pfas_sampling_wide$x11cl_pf3ouds_num_samples>0,1,0))
-sum(ifelse(pa_pfas_sampling_wide$x11cl_pf3ouds_above_mrl>0,1,0))
+# sum(ifelse(pa_pfas_sampling_wide$x11cl_pf3ouds_num_samples>0,1,0))
+# sum(ifelse(pa_pfas_sampling_wide$x11cl_pf3ouds_above_mrl>0,1,0))
 
 contaminants <- c("x11cl_pf3ouds","x4_2fts","x6_2fts","x8_2fts","x9cl_pf3ons","adona","hfpo_da","netfosaa","nfdha","nmefosaa","pfba","pfbs","pfda","pfdoa","pfeesa","pfhpa","pfhps","pfhxa","pfhxs","pfmba","pfmpa","pfna","pfoa","pfos","pfpea","pfpes","pfta","pftrda","pfuna")
 
