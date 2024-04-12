@@ -10,6 +10,11 @@ options(scipen = 999)
 
 # 2. data ----
 
+# downloaded historical census tract shapefiles from Social Explorer (https://geodata.socialexplorer.com/)
+
+
+
+
 # census population data
 
 api_key <- "e0e0537e1640689fd0719a4f97581e336b10c8ce"
@@ -55,16 +60,8 @@ tract_pop_00 <- get_decennial(geography = "tract",
                               cache_table = TRUE
 )
 
-tract_pop_00 <- get_acs(geography = "tract", 
-                           table = "B01001",               
-                           year = 2010,
-                           state = "PA",
-                           geometry = TRUE,
-                           keep_geo_vars = TRUE,     
-                           survey = "acs5",              
-                           output = "wide",
-                           cache_table = TRUE
-)
+
+
 
 
 
@@ -129,9 +126,13 @@ tables <-c(
 "B14002", 
 "B15002", 
 "B17001", 
+"B17017", 
 "B19013", 
 "B19083", 
 "B19301", 
+"B19055",
+"B19057",
+"B23007",
 "B25002", 
 "B25003", 
 "B23025", 

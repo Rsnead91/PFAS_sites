@@ -1371,8 +1371,8 @@ pa_pfas_sampling_wide[is.na(pa_pfas_sampling_wide)] <- 0
 
 
 
-openxlsx::write.xlsx(pa_pfas_sampling, file = "00_data/pa_pfas_sampling.xlsx")
-openxlsx::write.xlsx(pa_pfas_sampling_wide, file = "00_data/pa_pfas_sampling_wide.xlsx")
+# openxlsx::write.xlsx(pa_pfas_sampling, file = "00_data/pa_pfas_sampling.xlsx")
+# openxlsx::write.xlsx(pa_pfas_sampling_wide, file = "00_data/pa_pfas_sampling_wide.xlsx")
 
 
 
@@ -1395,7 +1395,8 @@ pws_pfastested <- merge(
                     by.x = "pws_id",
                     by.y = "PWS_ID",
                     keep.x = TRUE
-                  )
+                  ) %>% 
+  dplyr::select(pws_id, geoms)
   
 # st_write(pws_pfastested, dsn = "00_data/pws_pfastested.shp", append = FALSE)
 

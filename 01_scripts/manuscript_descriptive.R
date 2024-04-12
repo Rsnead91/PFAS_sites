@@ -77,15 +77,33 @@ mun_pfas <- left_join(area_mun_pfas %>% dplyr::select(fips, pfas_label), mun_red
 
 ## cancer ----
 
+cancer19 <- read_csv("00_data/Cancer Incidence_00-19.csv")
+
+# table(cancer19$Year)
+# table(cancer19$Sex)
+# table(cancer19$PrimarySite)
+
 cancer <- read_csv("00_data/Cancer Incidence_00-20.csv")
+
+# t <- table(cancer$FIPSCode4)
+# sum(ifelse(t == 480, 1, 0))
+# table(cancer$Year)
+# table(cancer$Sex)
+# table(cancer[ cancer$Year != 2020, "PrimarySite"])
+# view(filter(cancer, FIPSCode4 == "10160000"))
+# view(filter(cancer, FIPSCode4 == "10703264"))
+
+# excel file is missing 2020 and crc data
 
 cancer$len <- stringr::str_length(cancer$FIPSCode)  
 
+cancer$check <- str_sub(cancer$FIPSCode, 1, 1)
+
 cancer$FIPSCode2 <- ifelse(
-  cancer$len == 8, str_sub(cancer$FIPSCode, 2),
+  cancer$check == 0, str_sub(cancer$FIPSCode, 2),
   cancer$FIPSCode)
 
-cancer_red <- left_join(mun_red %>% dplyr::select(mun_fips_c, total_pop, total_pop_f, total_pop_m, geoms), cancer, by = c("mun_fips_c" = "FIPSCode")) %>% 
+cancer_red <- left_join(mun_red %>% dplyr::select(mun_fips_c, total_pop, total_pop_f, total_pop_m, geoms), cancer, by = c("mun_fips_c" = "FIPSCode2")) %>% 
   mutate(
     primary_site = case_when(
       PrimarySite == "Brain and Other Nervous System" ~ "Brain",
@@ -103,7 +121,10 @@ cancer_red <- left_join(mun_red %>% dplyr::select(mun_fips_c, total_pop, total_p
       PrimarySite == "Urinary Bladder" ~ "Bladder"
     )
   ) %>% 
+  ungroup() %>% 
   dplyr::select(County, mun_fips_c, Year, primary_site, Sex, InvasiveCount, total_pop, total_pop_m, total_pop_f, geoms)
+
+# save(cancer_red, file = "00_data/cancer_0020_studyarea.RData")
 
 cancer_agg <- cancer_red %>% 
   group_by(mun_fips_c, primary_site, Sex) %>% 
@@ -182,6 +203,8 @@ cancer_agg_wide$crude_incdrt100k_m <- case_when(
   cancer_agg_wide$primary_site == "Non-hodgkin lymphoma" ~ ((cancer_agg_wide$incidence_m/cancer_agg_wide$total_pop_m))*100000,
   cancer_agg_wide$primary_site == "Thyroid" ~ ((cancer_agg_wide$incidence_m/cancer_agg_wide$total_pop_m))*100000
 )
+
+# save(cancer_agg_wide, file = "00_data/cancer_0020_studyarea_wide.RData")
 
 ## final analysis data ----
 
